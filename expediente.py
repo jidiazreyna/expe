@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from PIL import Image
 import logging
-
+import re
 
 # ─────────────────────────── RUTAS Y RECURSOS ──────────────────────────
 if getattr(sys, "frozen", False):                     # ejecutable .exe
@@ -51,15 +51,96 @@ def fusionar_pdfs(lista, destino: Path):
         w.write(f)
 
 # --- CONST -------------------------------------------------------------
+TELETRABAJO_URL = "https://teletrabajo.justiciacordoba.gob.ar/remote/login?lang=sp"
 URL_BASE        = "https://www.tribunales.gov.ar"
 URL_LOGIN       = f"{URL_BASE}/SacInterior/Login.aspx"
 URL_RADIOGRAFIA = f"{URL_BASE}/SacInterior/_Expedientes/Radiografia.aspx"
+
+def _pick_selector(page, candidates):
+    for s in candidates:
+        try:
+            el = page.query_selector(s)
+            if el:
+                return s
+        except Exception:
+            pass
+    return None
+
+def _fill_first(page, candidates, value):
+    s = _pick_selector(page, candidates)
+    if not s:
+        raise RuntimeError(f"No encontré control para {candidates}")
+    page.fill(s, value)
+
+def _click_first(page, candidates):
+    s = _pick_selector(page, candidates)
+    if s:
+        page.click(s)
+        return True
+    return False
+
+def _proxy_prefix_from(url: str) -> str:
+    """
+    Extrae 'https://teletrabajo.../proxy/<token>/' del URL actual.
+    Lo usamos para armar URLs proxificadas a *.tribunales.gov.ar
+    """
+    m = re.search(r"https://teletrabajo\.justiciacordoba\.gob\.ar/proxy/[^/]+/", url)
+    if not m:
+        raise RuntimeError("No pude detectar el prefijo del proxy de Teletrabajo.")
+    return m.group(0)
 
 # ---------- LOGIN ROBUSTO ---------------------------------------------
 LOGIN_USER = '#txtUserName'
 LOGIN_PASS = '#txtUserPassword'
 LOGIN_BTN  = '#btnLogIn'
 FORM_POST  = 'form#frmPost'                # por si mañana se vuelve a usar
+def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass):
+    """
+    1) Loguea en Teletrabajo.
+    2) Entra al 'Portal de Aplicaciones PJ'.
+    3) Loguea en Intranet (LogIn.aspx).
+    4) Abre directamente Radiografía de SAC (proxificada).
+    Devuelve la pestaña ya parada en Radiografía.
+    """
+    page = context.new_page()
+    page.set_default_timeout(60000)
+
+    # 1) Login Teletrabajo
+    page.goto(TELETRABAJO_URL, wait_until="domcontentloaded")
+    _fill_first(page, ['#username', 'input[name="username"]', 'input[name="UserName"]', 'input[type="text"]'], tele_user)
+    _fill_first(page, ['#password', 'input[name="password"]', 'input[type="password"]'], tele_pass)
+    if not _click_first(page, ['text=Continuar', 'button[type="submit"]', 'input[type="submit"]']):
+        page.keyboard.press("Enter")
+    page.wait_for_load_state("networkidle")
+
+    # 2) Tile 'Portal de Aplicaciones PJ'
+    page.wait_for_selector('text=Portal de Aplicaciones PJ')
+    page.click('text=Portal de Aplicaciones PJ')
+    page.wait_for_load_state("domcontentloaded")
+
+    # Prefijo del proxy para armar URLs a tribunales.gov.ar
+    proxy_prefix = _proxy_prefix_from(page.url)
+
+    # 3) Login Intranet (LogIn.aspx)
+    page.goto(proxy_prefix + "https://www.tribunales.gov.ar/PortalWeb/LogIn.aspx",
+              wait_until="domcontentloaded")
+    # login "nuevo" del Portal
+    if "PortalWeb/LogIn" in page.url:
+        page.fill('#txtUserName', intra_user)
+        page.fill('#txtUserPassword', intra_pass)
+        page.click('#btnLogIn')
+        page.wait_for_load_state("networkidle")
+    else:
+        # fallback login "viejo" (por si redirige distinto)
+        _fill_first(page, ['#txtUsuario'], intra_user)
+        _fill_first(page, ['#txtContrasena'], intra_pass)
+        _click_first(page, ['#btnIngresar'])
+
+    # 4) Ir directo a Radiografía (ya con cookie de sesión)
+    sac = page
+    sac.goto(proxy_prefix + "https://www.tribunales.gov.ar/SacInterior/_Expedientes/Radiografia.aspx",
+             wait_until="domcontentloaded")
+    return sac
 
 def hacer_login(portal, usuario, clave):
     """Devuelve la pestaña SAC Interior ya autenticada."""
@@ -87,47 +168,43 @@ def hacer_login(portal, usuario, clave):
     return sac
 
 # ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
-def descargar_expediente(usuario, clave, nro_exp, carpeta_salida):
+def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, carpeta_salida):
     temp_dir = Path(tempfile.mkdtemp())
 
     with sync_playwright() as p:
         browser  = p.chromium.launch(headless=False)
         context  = browser.new_context(accept_downloads=True)
-        page = context.new_page()
-
         try:
-            
+            # 0) Abrir Radiografía via Teletrabajo + Intranet
+            sac = abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass)
+            logging.info(f"SAC Radiografía URL: {sac.url}")
 
-            # 1. Login      -> ahora recibimos la pestaña SAC interior
-            sac = hacer_login(page, usuario, clave)
-            logging.info(f"Tras login – Portal URL: {page.url}")
-            logging.info(f"SAC URL: {sac.url}")
-            # 2. Radiografía
-            sac.goto(URL_RADIOGRAFIA, wait_until="domcontentloaded")
+            # 1) Buscar expediente
             sac.fill("#txtNroExpediente", nro_exp)
             sac.click("#btnBuscarExp")
             sac.wait_for_load_state("networkidle")
-            logging.info(f"Radiografía URL: {sac.url}")
+            logging.info(f"Radiografía tras búsqueda: {sac.url}")
             if "SacInterior/Login.aspx" in sac.url:
-                logging.error("Redirigió al 404 de Login.aspx")
+                logging.error("Volvió al login del SAC.")
                 messagebox.showerror("Error de sesión",
-                    "El SAC devolvió 404 después del login. "
-                    "Revisá debug.log y avisanos.")
+                    "El SAC pidió re-login. Probá nuevamente.")
                 return
-            # 3. Adjuntos
+
+            # 2) Adjuntos
             adjuntos = []
             try:
                 filas = sac.query_selector_all("table#gvAdjuntos tr")[1:]
                 for f in filas:
                     enlace = f.query_selector("a")
-                    if not enlace: continue
-                    fecha = datetime.datetime.strptime(
-                        f.query_selector("td").inner_text().strip(), "%d/%m/%Y")
+                    if not enlace: 
+                        continue
+                    fecha_txt = f.query_selector("td").inner_text().strip()
+                    fecha = datetime.datetime.strptime(fecha_txt, "%d/%m/%Y")
                     adjuntos.append((fecha, enlace))
             except Exception:
                 pass
 
-            # 4. Libro
+            # 3) Libro (se abre en popup)
             sac.click("text='¿Qué puedo hacer?'")
             with sac.expect_popup() as pop:
                 sac.click("text='Ver Expediente como Libro'")
@@ -147,15 +224,16 @@ def descargar_expediente(usuario, clave, nro_exp, carpeta_salida):
                     libro.wait_for_timeout(80)
                 libro.eval_on_selector("div#indice", "(el)=>el.scrollBy(0, el.clientHeight)")
 
-            # 5. PDF del libro
+            # 4) PDF del libro
             pdf_libro = temp_dir / f"Libro_{nro_exp}.pdf"
             libro.emulate_media(media="print")
             libro.pdf(path=str(pdf_libro), print_background=True, scale=0.9)
 
-            # 6. Descarga de adjuntos
+            # 5) Descarga de adjuntos
             adj_pdfs = []
             for fecha, link in sorted(adjuntos, key=lambda x: x[0]):
-                with sac.expect_download() as dl: link.click()
+                with sac.expect_download() as dl:
+                    link.click()
                 d = dl.value
                 destino = temp_dir / d.suggested_filename
                 d.save_as(destino)
@@ -167,7 +245,7 @@ def descargar_expediente(usuario, clave, nro_exp, carpeta_salida):
                 _estampar_header(destino, marcado, "ADJUNTO")
                 adj_pdfs.append(marcado)
 
-            # 7. Fusión
+            # 6) Fusión
             out = carpeta_salida / f"Exp_{nro_exp}.pdf"
             fusionar_pdfs([pdf_libro] + adj_pdfs, out)
             messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
@@ -177,45 +255,70 @@ def descargar_expediente(usuario, clave, nro_exp, carpeta_salida):
             browser.close()
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+
 # ───────────────────────── INTERFAZ Tkinter ────────────────────────────
 class App:
     def __init__(self, master):
         master.title("Descargar expediente SAC")
         load_dotenv()
 
-        Label(master, text="Usuario:").grid(row=0, column=0, sticky="e")
-        Label(master, text="Clave:").grid(row=1, column=0, sticky="e")
-        Label(master, text="Nº Expediente:").grid(row=2, column=0, sticky="e")
+        # ── Labels
+        Label(master, text="Usuario Teletrabajo:").grid(row=0, column=0, sticky="e")
+        Label(master, text="Clave Teletrabajo:").grid(row=1, column=0, sticky="e")
+        Label(master, text="Usuario Intranet:").grid(row=2, column=0, sticky="e")
+        Label(master, text="Clave Intranet:").grid(row=3, column=0, sticky="e")
+        Label(master, text="Nº Expediente:").grid(row=4, column=0, sticky="e")
 
-        self.user = StringVar(value=os.getenv("SAC_USER", ""))
-        self.pwd  = StringVar(value=os.getenv("SAC_PASS", ""))
-        self.exp  = StringVar()
+        # ── Vars (con defaults desde .env)
+        self.tele_user = StringVar(value=os.getenv("TELE_USER", ""))  # nuevo
+        self.tele_pwd  = StringVar(value=os.getenv("TELE_PASS", ""))  # nuevo
+        # por compatibilidad, si no hay INTRA_* usamos SAC_*
+        self.intra_user = StringVar(value=os.getenv("INTRA_USER", os.getenv("SAC_USER", "")))
+        self.intra_pwd  = StringVar(value=os.getenv("INTRA_PASS", os.getenv("SAC_PASS", "")))
+        self.exp        = StringVar()
 
-        Entry(master, textvariable=self.user, width=26).grid(row=0, column=1)
-        Entry(master, textvariable=self.pwd,  width=26, show="*").grid(row=1, column=1)
-        Entry(master, textvariable=self.exp,  width=26).grid(row=2, column=1)
+        # ── Entradas
+        Entry(master, textvariable=self.tele_user, width=26).grid(row=0, column=1)
+        Entry(master, textvariable=self.tele_pwd,  width=26, show="*").grid(row=1, column=1)
+        Entry(master, textvariable=self.intra_user, width=26).grid(row=2, column=1)
+        Entry(master, textvariable=self.intra_pwd,  width=26, show="*").grid(row=3, column=1)
+        Entry(master, textvariable=self.exp,        width=26).grid(row=4, column=1)
 
         self.btn = Button(master, text="Descargar expediente", command=self.run)
-        self.btn.grid(row=3, column=0, columnspan=2, pady=10)
+        self.btn.grid(row=5, column=0, columnspan=2, pady=10)
 
     def run(self):
-        if not all([self.user.get().strip(), self.pwd.get().strip(), self.exp.get().strip()]):
-            messagebox.showerror("Faltan datos", "Completá usuario, clave y expediente.")
+        if not all([
+            self.tele_user.get().strip(),
+            self.tele_pwd.get().strip(),
+            self.intra_user.get().strip(),
+            self.intra_pwd.get().strip(),
+            self.exp.get().strip()
+        ]):
+            messagebox.showerror("Faltan datos",
+                "Completá usuario/clave de Teletrabajo, usuario/clave de Intranet y Nº de expediente.")
             return
+
         carpeta = filedialog.askdirectory(title="Carpeta destino")
-        if not carpeta: return
+        if not carpeta:
+            return
 
         self.btn.config(state="disabled")
         threading.Thread(
             target=lambda: self._ejecutar(Path(carpeta)),
-            daemon=True).start()
+            daemon=True
+        ).start()
 
     def _ejecutar(self, carpeta: Path):
         try:
-            descargar_expediente(self.user.get().strip(),
-                                  self.pwd.get().strip(),
-                                  self.exp.get().strip(),
-                                  carpeta)
+            descargar_expediente(
+                self.tele_user.get().strip(),
+                self.tele_pwd.get().strip(),
+                self.intra_user.get().strip(),
+                self.intra_pwd.get().strip(),
+                self.exp.get().strip(),
+                carpeta
+            )
         except Exception as e:
             messagebox.showerror("Error", str(e))
         finally:
