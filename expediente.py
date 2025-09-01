@@ -31,7 +31,6 @@ os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BASE_PATH / "ms-playwright")
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-<<<<<<< HEAD
 # ───────── Seguridad/Permisos ─────────
 PERM_MSG = "El usuario no tiene los permisos suficientes para visualizar este contenido."
 
@@ -100,32 +99,6 @@ def _contenido_operacion_valido(texto: str) -> bool:
     if not t:
         return False
     return not _tiene_mensaje_permiso(t)
-=======
-def _caratula_url(libro) -> str:
-    S = _libro_scope(libro)
-    exp_id = S.evaluate("() => document.getElementById('hdExpedienteId')?.value") or ""
-    if not exp_id:
-        raise RuntimeError("No encontré hdExpedienteId en el Libro.")
-    proxy_prefix = _get_proxy_prefix(libro)
-    return proxy_prefix + f"https://www.tribunales.gov.ar/SacInterior/_Expedientes/ImprimirCaratula.aspx?idExpediente={exp_id}&CuerpoDesde=1&CuerpoHasta=1"
-
-def _requests_session_from_context(context):
-    s = requests.Session()
-    for c in context.cookies():
-        if ".tribunales.gov.ar" in c.get("domain","") or "teletrabajo.justiciacordoba.gob.ar" in c.get("domain",""):
-            s.cookies.set(c["name"], c["value"], domain=c.get("domain"), path=c.get("path","/"))
-    s.headers.update({"User-Agent":"Mozilla/5.0", "Referer":"https://www.tribunales.gov.ar/"})
-    s.trust_env = True  # usa HTTP(S)_PROXY si el entorno los define
-
-    adapter = HTTPAdapter(
-        pool_connections=20,
-        pool_maxsize=20,
-        max_retries=Retry(total=3, backoff_factor=0.3, status_forcelist=[502,503,504])
-    )
-    s.mount("http://", adapter)
-    s.mount("https://", adapter)
-    return s
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
 
 # --- URLs base ---------------------------------------------------------
@@ -147,7 +120,6 @@ def _is_tribunales(u: str) -> bool:
 from io import BytesIO
 import subprocess, shutil as _shutil
 
-<<<<<<< HEAD
 def _asegurar_seccion_operaciones_visible(page):
     """Muestra la sección 'OPERACIONES' si está colapsada y la desplaza a la vista."""
     try:
@@ -385,8 +357,6 @@ def _descargar_ops_en_paralelo(session, template_url: str, op_ids: list[str], tm
     return out
 
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _ensure_pdf(path: Path) -> Path:
     """
     Si path ya es PDF → lo devuelve.
@@ -423,22 +393,6 @@ def _ensure_pdf(path: Path) -> Path:
     # si no pudimos convertir, devolvemos el original (se omitirá en la fusión si no es PDF)
     return path
 
-<<<<<<< HEAD
-=======
-def _overlay_page(w, h, texto: str):
-    """Crea un overlay PDF (marco + cabecera) en memoria del tamaño (w,h)."""
-    buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=(w, h))
-    margin = 18
-    c.setLineWidth(1)
-    c.rect(margin, margin, w - 2*margin, h - 2*margin)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(margin + 10, h - margin + 2, texto[:180])
-    c.save()
-    buf.seek(0)
-    return PdfReader(buf).pages[0]
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
 from PyPDF2 import PdfReader, PdfWriter, PdfMerger  # ← sumá PdfMerger
 
@@ -532,7 +486,6 @@ except Exception:
         for t in temps:
             try: t.unlink()
             except Exception: pass
-<<<<<<< HEAD
 def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bool = True) -> list[str]:
     """
     Busca ids de operaciones en Radiografía de forma rápida.
@@ -782,8 +735,6 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
             return _tiene_mensaje_permiso(contenido)
 
     return False  # si ni siquiera pudimos abrir, no afirmamos denegación explícita
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
 
 # ───────────────────────── UTILIDADES PDF ──────────────────────────────
@@ -827,11 +778,8 @@ def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
 
     with open(destino, "wb") as f:
         w.write(f)
-<<<<<<< HEAD
 
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _libro_scope(libro):
     """Devuelve la página/frame que realmente contiene el índice y las operaciones."""
     try:
@@ -891,21 +839,6 @@ def _listar_operaciones_rapido(libro):
         items.append({"id": m.group(1), "tipo": m.group(2), "titulo": t})
     return items
 
-<<<<<<< HEAD
-=======
-
-def _ocultar_indice_libro(libro):
-    """Inyecta CSS para ocultar índice/menus sin tapar el visor de fojas."""
-    css = """
-    #indice, .indice, .nav-container, .menuLateral { display:none !important; }
-    a[href*="Imprimir"], [onclick*="Imprimir"], .goup, .go-top, .scrollup { display:none !important; }
-    """
-    try:
-        _libro_scope(libro).add_style_tag(content=css)
-    except Exception:
-        pass
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _url_from_ver_adjunto(js_call: str, proxy_prefix: str) -> str | None:
     """
     Convierte "javascript:VerAdjuntoFichero('29229802')" en una URL real,
@@ -1047,10 +980,7 @@ def _extract_url_from_js(js: str) -> str | None:
     m = re.search(r"/proxy/[^'\"()]+", js)
     if m: return "https://teletrabajo.justiciacordoba.gob.ar" + m.group(0)
     return None
-<<<<<<< HEAD
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _fill_radiografia_y_buscar(page, nro_exp):
     """Completa el Nº de Expediente en Radiografía y ejecuta la búsqueda (Enter o botón)."""
     def _first_visible(selectors):
@@ -1122,11 +1052,8 @@ def _fill_radiografia_y_buscar(page, nro_exp):
                 page.wait_for_load_state("networkidle")
             except Exception:
                 pass
-<<<<<<< HEAD
 
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 # --- Usa el que ya funcionaba en Teletrabajo ---
 def _abrir_libro_legacy(sac):
     """Abre '* Ver Expediente como Libro' y devuelve la Page del libro (flujo viejo)."""
@@ -1185,10 +1112,7 @@ def _abrir_libro_legacy(sac):
         pass
 
     raise RuntimeError("No pude abrir 'Ver Expediente como Libro'.")
-<<<<<<< HEAD
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     import re
 
@@ -1198,7 +1122,6 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
         sac.goto(proxy_prefix + URL_RADIOGRAFIA, wait_until="domcontentloaded")
         if nro_exp:                              # <- re-busca el expediente
             _fill_radiografia_y_buscar(sac, nro_exp)
-<<<<<<< HEAD
     # ── Gate de Radiografía: ¿hay operaciones y puedo ver su contenido? ──
     STRICT = _env_true("STRICT_ONLY_VISIBLE_OPS", "0")
     CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
@@ -1231,8 +1154,6 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
         logging.info("[SEC] Radiografía: aparece grilla pero el contenido está bloqueado.")
         messagebox.showwarning("Sin acceso", "No tenés permisos para visualizar el contenido de las operaciones. No se descargó nada.")
         return
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
     if "PortalWeb/LogIn/Login.aspx" in (sac.url or "") or "SacInterior/Login.aspx" in (sac.url or ""):
         _login_intranet(sac, intra_user, intra_pass)
@@ -1467,7 +1388,6 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
         )
         return _imagen_a_pdf(clip_png)
 
-<<<<<<< HEAD
 def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[Path]:
     """
     Encuentra y descarga los adjuntos que cuelgan de UNA operación dentro del Libro.
@@ -1479,16 +1399,6 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
     pdfs: list[Path] = []
     vistos: set[tuple[str, int]] = set()
 
-=======
-
-
-def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[Path]:
-    """
-    Encuentra y descarga los adjuntos que cuelgan de UNA operación dentro del Libro.
-    Convierte a PDF si hace falta. Devuelve lista de Paths a PDFs.
-    """
-    pdfs: list[Path] = []
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
     scope = libro.locator(f"[id='{op_id}'], [data-codigo='{op_id}']")
     if not scope.count():
         return pdfs
@@ -1496,22 +1406,15 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
     triggers = scope.locator(
         "[onclick*='VerAdjuntoFichero'], a[href*='Fichero.aspx'], a:has-text('Adjunto'), a[href*='VerAdjunto']"
     )
-<<<<<<< HEAD
     try:
         n = triggers.count()
     except Exception:
         n = 0
-=======
-    n = 0
-    try: n = triggers.count()
-    except Exception: n = 0
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
     for i in range(n):
         link = triggers.nth(i)
         try:
             with libro.expect_download() as dl:
-<<<<<<< HEAD
                 try:
                     link.click()
                 except Exception:
@@ -1519,17 +1422,10 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
                         link.evaluate("el => el.click()")
                     except Exception:
                         continue
-=======
-                try: link.click()
-                except Exception:
-                    try: link.evaluate("el => el.click()")
-                    except Exception: continue
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             d = dl.value
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
 
-<<<<<<< HEAD
             # Normalización a PDF
             if not _is_real_pdf(destino):
                 pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
@@ -1561,21 +1457,12 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
             # Si algo abre otra pestaña y falla, seguimos con el resto
             continue
 
-=======
-            pdf = _ensure_pdf(destino)
-            if pdf.suffix.lower() == ".pdf" and pdf.exists():
-                pdfs.append(pdf)
-        except Exception:
-            # Si algo abre otra pestaña y falla, seguimos con el resto
-            continue
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
     return pdfs
 
 
 def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]]:
     """
     Devuelve { op_id: [PDFs...] } leyendo la grilla “Adjuntos” de Radiografía.
-<<<<<<< HEAD
     - Descarga cada adjunto por la UI (lo mismo que hacés a mano).
     - Convierte a PDF si hace falta.
     - Descarta respuestas sin permiso.
@@ -1598,33 +1485,13 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
                 toggle.click(); sac.wait_for_timeout(250)
         elif toggle.count():
             toggle.click(); sac.wait_for_timeout(250)
-=======
-    Convierte a PDF cuando corresponde.
-    """
-    mapeo: dict[str, list[Path]] = {}
-
-    # asegurar que la sección esté visible
-    try:
-        toggle = sac.locator("a[href*=\"Seccion('Adjuntos')\"]").first
-        cont   = sac.locator("#divAdjuntos").first
-        oculto = False
-        if cont.count():
-            try: oculto = cont.evaluate("el => getComputedStyle(el).display === 'none'")
-            except Exception: pass
-            if oculto and toggle.count(): toggle.click(); sac.wait_for_timeout(250)
-        elif toggle.count(): toggle.click(); sac.wait_for_timeout(250)
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
     except Exception:
         pass
 
     filas = sac.locator("#cphDetalle_gvAdjuntos tr")
     total = filas.count() if filas else 0
 
-<<<<<<< HEAD
     for i in range(1, total):  # saltear header
-=======
-    for i in range(1, total):
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
         fila = filas.nth(i)
 
         # op_id en la col. “Operación – Tipo de Operación”
@@ -1634,7 +1501,6 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
             href = op_link.get_attribute("href") or ""
             oc   = op_link.get_attribute("onclick") or ""
             m = re.search(r"VerDecretoHtml\('([^']+)'\)", href or oc)
-<<<<<<< HEAD
             if m:
                 op_id = m.group(1)
 
@@ -1642,30 +1508,19 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
         file_link = fila.locator(
             "a[href*='VerAdjuntoFichero'], a[onclick*='VerAdjuntoFichero'], a[href*='Fichero.aspx']"
         ).first
-=======
-            if m: op_id = m.group(1)
-
-        file_link = fila.locator("a[href*='VerAdjuntoFichero'], a[href*='Fichero.aspx']").first
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
         if not file_link.count():
             continue
 
         try:
             with sac.expect_download() as dl:
-<<<<<<< HEAD
                 try:
                     file_link.click()
                 except Exception:
                     file_link.evaluate("el => el.click()")
-=======
-                try: file_link.click()
-                except Exception: file_link.evaluate("el => el.click()")
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             d = dl.value
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
 
-<<<<<<< HEAD
             # Normalización a PDF
             if not _is_real_pdf(destino):
                 pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
@@ -1694,11 +1549,6 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
             # Guardar en el mapeo
             mapeo.setdefault(op_id or "__SIN_OP__", []).append(pdf)
 
-=======
-            pdf = _ensure_pdf(destino)
-            if pdf.suffix.lower() == ".pdf" and pdf.exists():
-                mapeo.setdefault(op_id or "__SIN_OP__", []).append(pdf)
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
         except Exception:
             continue
 
@@ -1903,10 +1753,6 @@ def _login_intranet(page, intra_user, intra_pass):
     except Exception:
         pass
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _kill_overlays(page):
     """Oculta/remueve cortinas/overlays que interceptan el click (jQuery UI / modales)."""
     try:
@@ -1929,11 +1775,6 @@ def _kill_overlays(page):
     except Exception:
         pass
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _ensure_public_apps(page):
     """
     Nos posiciona en PublicApps.aspx (listado 'Aplicaciones') con el mismo /proxy/.
@@ -2010,10 +1851,6 @@ def _expandir_y_cargar_todo_el_libro(libro):
 
     return orden
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _mostrar_operacion(libro, op_id: str, tipo: str):
     S = _libro_scope(libro)
     # Intento clic al link visible del índice
@@ -2055,84 +1892,6 @@ def _extraer_url_de_link(link, proxy_prefix: str) -> str | None:
 
     return None
 
-<<<<<<< HEAD
-=======
-def _listar_adjuntos_urls_de_operacion(libro, op_id:str) -> list[tuple[str,str]]:
-    """
-    Devuelve [(url, nombre_sugerido), ...] de adjuntos que cuelgan de UNA operación del Libro.
-    """
-    urls = []
-    scope = libro.locator(f"[id='{op_id}'], [data-codigo='{op_id}']")
-    if not scope.count():
-        return urls
-    proxy_prefix = _get_proxy_prefix(libro)
-    triggers = scope.locator("[onclick*='VerAdjuntoFichero'], a[href*='Fichero.aspx'], a:has-text('Adjunto'), a[href*='VerAdjunto']")
-    n = triggers.count() if triggers else 0
-    vistos = set()
-    # si no encuentra triggers visibles, buscá por texto 'ADJUNTOS' y luego dentro de ese bloque
-    if not triggers.count():
-        alert = scope.locator(":text('ADJUNTOS')").first
-        if alert.count():
-            triggers = alert.locator("a[href], a[onclick]")
-
-    for i in range(n):
-        link = triggers.nth(i)
-        try:
-            u = _extraer_url_de_link(link, proxy_prefix)
-            if not u or u in vistos: 
-                continue
-            vistos.add(u)
-            # nombre por defecto: último segmento de la URL
-            name = Path(urlparse(u).path).name or f"adj_{i}"
-            urls.append((u, name))
-        except Exception:
-            continue
-    return urls
-
-def _listar_adjuntos_urls_grid_mapeado(sac) -> dict[str, list[tuple[str,str]]]:
-    """
-    Igual que _descargar_adjuntos_grid_mapeado pero NO descarga: devuelve {op_id:[(url,name),...]}
-    """
-    mapeo: dict[str,list[tuple[str,str]]] = {}
-    proxy_prefix = _get_proxy_prefix(sac)
-    try:
-        toggle = sac.locator("a[href*=\"Seccion('Adjuntos')\"]").first
-        cont   = sac.locator("#divAdjuntos").first
-        oculto = False
-        if cont.count():
-            try: oculto = cont.evaluate("el => getComputedStyle(el).display === 'none'")
-            except Exception: pass
-            if oculto and toggle.count(): toggle.click(); sac.wait_for_timeout(250)
-        elif toggle.count(): toggle.click(); sac.wait_for_timeout(250)
-    except Exception:
-        pass
-
-    filas = sac.locator("#cphDetalle_gvAdjuntos tr")
-    total = filas.count() if filas else 0
-    for i in range(1, total):
-        fila = filas.nth(i)
-        op_link = fila.locator("a[href*='VerDecretoHtml'], a[onclick*='VerDecretoHtml']").first
-        op_id = None
-        if op_link.count():
-            href = op_link.get_attribute("href") or ""
-            oc   = op_link.get_attribute("onclick") or ""
-            m = re.search(r"VerDecretoHtml\('([^']+)'\)", href or oc)
-            if m: op_id = m.group(1)
-
-        file_link = fila.locator("a[href*='VerAdjuntoFichero'], a[href*='Fichero.aspx']").first
-        if not file_link.count(): 
-            continue
-
-        u = _extraer_url_de_link(file_link, proxy_prefix)
-        if not u: 
-            continue
-
-        name = Path(urlparse(u).path).name or f"adj_{i}"
-        mapeo.setdefault(op_id or "__SIN_OP__", []).append((u, name))
-    return mapeo
-
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Path | None:
     from requests.exceptions import SSLError
     from urllib.parse import urlparse
@@ -2180,11 +1939,6 @@ def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Pa
         logging.info(f"[DL:ERR]   {destino.name} · {e}")
         return None
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _imagen_a_pdf_fast(img: Path) -> Path:
     pdf = img.with_suffix(".pdf")
     logging.info(f"[CNV:IMG]  {img.name}  →  {pdf.name}")
@@ -2224,60 +1978,6 @@ def _ensure_pdf_fast(path: Path) -> Path:
     return path
 
 
-<<<<<<< HEAD
-=======
-def _bajar_urls_en_paralelo(urls:list[tuple[str,str]], carpeta:Path, session:requests.Session, max_workers=6, prefix:str|None=None) -> list[Path]:
-    destinos = []
-    futures = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for url, name in urls:
-            base = (prefix or "") + name
-            dst = carpeta / base
-            k = 1
-            while dst.exists():
-                dst = carpeta / (f"{Path(base).stem}_{k}{Path(base).suffix}")
-                k += 1
-            futures.append(ex.submit(_descargar_archivo, session, url, dst))
-        for fut in as_completed(futures):
-            p = fut.result()
-            if p: destinos.append(p)
-    return destinos
-
-
-def _convertir_a_pdf_en_paralelo(paths: list[Path], temp_dir: Path | None = None) -> list[Path]:
-    img_ext = {".jpg",".jpeg",".png",".tif",".tiff",".bmp"}
-    office_ext = {".doc",".docx",".xls",".xlsx",".ppt",".pptx",".odt",".ods",".odp",".rtf"}
-
-    pdfs: list[Path] = []
-    for p in paths:
-        if p.suffix.lower() == ".pdf" and p.exists():
-            logging.info(f"[CNV:SKP] {p.name} (ya es PDF)")
-            pdfs.append(p)
-
-    imgs = [p for p in paths if p.suffix.lower() in img_ext]
-    offices = [p for p in paths if p.suffix.lower() in office_ext]
-
-    if imgs:
-        logging.info(f"[CNV:IMG]  {len(imgs)} imagen(es) a convertir")
-    if offices:
-        logging.info(f"[CNV:OFF]  {len(offices)} archivo(s) Office a convertir")
-
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    with ThreadPoolExecutor(max_workers=os.cpu_count()*2 or 4) as ex:
-        futures = [ex.submit(_imagen_a_pdf_fast, p) for p in imgs]
-        for f in as_completed(futures):
-            out = f.result()
-            if out and out.exists():
-                pdfs.append(out)
-
-    for p in offices:
-        out = _ensure_pdf_fast(p)
-        if out.suffix.lower() == ".pdf" and out.exists():
-            pdfs.append(out)
-
-    return pdfs
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _open_sac_desde_portal_teletrabajo(page):
     """
     *** SOLO Teletrabajo ***
@@ -2443,11 +2143,6 @@ def _open_sac_desde_portal(page):
         return _open_sac_desde_portal_teletrabajo(page)
     return _open_sac_desde_portal_intranet(page)
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _ir_a_radiografia(sac):
     """
     Preferir el menú de SAC → “Radiografía”. Si no aparece, usar URL con el mismo /proxy/.
@@ -2718,111 +2413,6 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     logging.info("[PRINT] No pude obtener el PDF del Libro ni por botón ni por fallback headless.")
     return None
 
-<<<<<<< HEAD
-=======
-def _guardar_libro_html_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
-    """
-    Toma un snapshot HTML del 'Expediente como Libro' (del frame real),
-    le inyecta <base> + CSS de impresión y lo convierte a PDF en headless.
-    Evita por completo el diálogo 'Guardar como...'.
-    """
-    S = _libro_scope(libro)
-    _cerrar_indice_libro(libro)
-
-    out_html = tmp_dir / "libro_snapshot.html"
-    out_pdf  = tmp_dir / "libro_from_html.pdf"
-
-    try:
-        # 1) HTML actual del frame (con todas las fojas ya precargadas)
-        html = S.content()
-
-        # 2) Base para que TODOS los src/href relativos apunten vía /proxy/ al dominio real
-        proxy_prefix = _get_proxy_prefix(libro)
-        base_href = proxy_prefix + "https://www.tribunales.gov.ar/"
-
-        # 3) CSS para vista de impresión (oculta índice/menús, bordes, etc.)
-        extra_css = """
-        @page { size: A4; margin: 12mm; }
-        html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        #indice, .indice, .nav-container, .menuLateral, .navbar,
-        .goup, .go-top, .scrollup { display: none !important; }
-        """
-
-        # 4) Inyectar <base> + <style> dentro de <head>
-        try:
-            html = re.sub(
-                r"(?i)<head([^>]*)>",
-                lambda m: f"<head{m.group(1)}><base href=\"{base_href}\"><style>{extra_css}</style>",
-                html, count=1
-            )
-            if "<base " not in html.lower():
-                html = html.replace("<head>", f"<head><base href=\"{base_href}\"><style>{extra_css}</style>", 1)
-        except Exception:
-            # Último recurso: prepend
-            html = f"<base href=\"{base_href}\"><style>{extra_css}</style>" + html
-
-        # 5) Guardar el HTML snapshot (útil si activás KEEP_WORK)
-        with open(out_html, "w", encoding="utf-8") as f:
-            f.write(html)
-
-        # 6) Convertir a PDF con Chromium headless reusando cookies/sesión
-        state_file = tmp_dir / "state.json"
-        context.storage_state(path=str(state_file))
-
-        hbrowser = p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
-        hctx = hbrowser.new_context(storage_state=str(state_file), viewport={"width": 1366, "height": 900})
-        hp = hctx.new_page()
-
-        # Cargamos el HTML con base ya inyectada (los recursos se resuelven por el proxy)
-        hp.set_content(html, wait_until="domcontentloaded")
-        try: hp.emulate_media(media="print")
-        except Exception: pass
-
-        hp.pdf(path=str(out_pdf), format="A4", print_background=True, prefer_css_page_size=True)
-
-        try:
-            hctx.close(); hbrowser.close()
-        except Exception:
-            pass
-
-        if out_pdf.exists() and out_pdf.stat().st_size > 1024:
-            logging.info(f"[HTML→PDF] PDF libro guardado: {out_pdf.name}")
-            return out_pdf
-    except Exception as e:
-        logging.info(f"[HTML→PDF:ERR] {e}")
-
-    return None
-
-
-def _inyectar_cortes_por_operacion(libro, ops):
-    """Inserta CSS para paginar: cada operación nueva comienza en página nueva."""
-    S = _libro_scope(libro)
-    ids = [op["id"] for op in ops if op.get("id")]
-    try:
-        S.evaluate("""
-            (ids) => {
-                const s = document.createElement('style');
-                // 1) Evitar que se parta el contenido de una operación
-                let css = `
-                    [data-codigo], [id] { page-break-inside: avoid; break-inside: avoid-page; }
-                    @page { size: A4; margin: 12mm; }
-                `;
-                // 2) Cada operación (menos la 1ª) empieza en página nueva
-                ids.slice(1).forEach(id => {
-                    css += `
-                        [id='${id}'], [data-codigo='${id}']{
-                            page-break-before: always; break-before: page;
-                        }
-                    `;
-                });
-                s.textContent = css;
-                document.head.appendChild(s);
-            }
-        """, ids)
-    except Exception:
-        pass
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
 def _guardar_libro_como_html(libro, tmp_dir: Path) -> Path | None:
     """
@@ -2910,10 +2500,7 @@ def _convertir_html_a_pdf(html_path: Path, context, p, tmp_dir: Path) -> Path | 
     except Exception as e:
         logging.info(f"[HTML→PDF:ERR] {e}")
     return None
-<<<<<<< HEAD
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path) -> Path | None:
     S = _libro_scope(libro)
     cont = S.locator(f"[id='{op_id}'], [data-codigo='{op_id}']").first
@@ -2985,10 +2572,6 @@ def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path
 
     return out if out.exists() and out.stat().st_size > 500 else None
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _render_caratula_a_pdf(libro, context, p, tmp_dir: Path) -> Path | None:
     """
     Nueva forma: NO navega a ImprimirCaratula.aspx.
@@ -3069,10 +2652,6 @@ def _render_caratula_a_pdf(libro, context, p, tmp_dir: Path) -> Path | None:
     return None
 
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
 
     try:
@@ -3110,45 +2689,12 @@ def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
     return cleaned
 
 
-<<<<<<< HEAD
-=======
-
-def _estampar_si_corresponde(pdf: Path, texto: str | None) -> Path:
-    if os.getenv("STAMP_HEADERS", "0").lower() not in ("1","true","t","yes","y","si","sí"):
-        return pdf
-    try:
-        stamped = pdf.with_suffix(".stamped.pdf")
-        _estampar_header(pdf, stamped, texto=texto or "ADJUNTO")
-        pdf.unlink(missing_ok=True)
-        return stamped
-    except Exception:
-        return pdf
-
-
-def _obtener_libro_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
-    modo = os.getenv("BOOK_CAPTURE_MODE", "html").lower()  # 'html' | 'print' | 'auto'
-    if modo == "print":
-        return _imprimir_libro_a_pdf(libro, context, tmp_dir, p)
-    if modo == "auto":
-        pdf = _imprimir_libro_a_pdf(libro, context, tmp_dir, p)
-        if pdf: return pdf
-    # 'html' o fallback de 'auto'
-    html = _guardar_libro_como_html(libro, tmp_dir)
-    return _convertir_html_a_pdf(html, context, p, tmp_dir) if html else None
-
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 # ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
 def _env_true(name: str, default="0"):
     return os.getenv(name, default).lower() in ("1","true","t","yes","y","si","sí")
 # ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
-<<<<<<< HEAD
 def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, carpeta_salida):
     SHOW_BROWSER = _env_true("SHOW_BROWSER", "1")
-=======
-
-def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, carpeta_salida):
-    SHOW_BROWSER = _env_true("SHOW_BROWSER", "0")
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
     CHROMIUM_ARGS = ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
     KEEP_WORK = _env_true("KEEP_WORK", "0")
     STAMP = _env_true("STAMP_HEADERS", "1")
@@ -3162,14 +2708,9 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
     def _mf(line: str):
         return
-<<<<<<< HEAD
     etapa("Preparando entorno y navegador")
     with sync_playwright() as p:
         etapa("Inicializando navegador")
-=======
-
-    with sync_playwright() as p:
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
         browser = p.chromium.launch(
             headless=not SHOW_BROWSER,
             args=CHROMIUM_ARGS,
@@ -3190,20 +2731,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             )
 
         try:
-<<<<<<< HEAD
             etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
             # 1) Login → Radiografía
             sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
 
             # 2) Buscar expediente
             etapa(f"Entrando a Radiografía y buscando expediente N° {nro_exp}")
-=======
-            # 1) Login → Radiografía
-            sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
-
-
-            # 2) Buscar expediente
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             _fill_radiografia_y_buscar(sac, nro_exp)
             if "SacInterior/Login.aspx" in sac.url:
                 messagebox.showerror("Error de sesión", "El SAC pidió re-login. Probá nuevamente.")
@@ -3213,7 +2746,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 sac = _ir_a_radiografia(sac)
                 _fill_radiografia_y_buscar(sac, nro_exp)
 
-<<<<<<< HEAD
             # >>> GATE DESDE RADIOGRAFÍA (ESPERAR → PROBAR SI HAY) <<<
             CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
             etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
@@ -3282,39 +2814,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     except Exception: pass
                     _mf(f"CARATULA · {caratula_pdf.name}")
                     bloques.append((caratula_pdf, None))
-=======
-            # 3) Abrir Libro y precargar TODAS las operaciones
-            libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
-            ops = _expandir_y_cargar_todo_el_libro(libro)
-            if not ops:
-                _recorrer_indice_libro(libro)
-                ops = _listar_operaciones_rapido(libro)
-            logging.info(f"[OPS] Encontradas {len(ops)} operaciones en el índice.")
-
-
-
-            # 4) Volver a Radiografía y DESCARGAR adjuntos de la grilla (mapeados por operación)
-            try:
-                sac.bring_to_front()
-            except Exception:
-                pass
-            pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path(pdf), ...]}
-            # 4 bis) CARÁTULA (primera página del PDF final)
-            bloques: list[tuple[Path, str | None]] = []  # inicializá acá para poder anteponer la carátula
-            try:
-                caratula_pdf = _render_caratula_a_pdf(libro, context, p, temp_dir)
-                if caratula_pdf and caratula_pdf.exists():
-                    caratula_pdf = _pdf_sin_blancos(caratula_pdf)
-                    _mf(f"CARATULA · {caratula_pdf.name}")
-                    bloques.append((caratula_pdf, None))  # ← va primera
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
                     logging.info("[CARATULA] agregada al inicio")
                 else:
                     logging.info("[CARATULA] no se pudo capturar (se continúa)")
             except Exception as e:
                 logging.info(f"[CARATULA:ERR] {e}")
 
-<<<<<<< HEAD
             # 5) Adjuntos del GRID (mapeados por operación)
             etapa("Descargando adjuntos desde Radiografía (grilla)")
             try:
@@ -3417,111 +2922,25 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
 
             # 8) Adjuntos sin operación mapeada → al final
-=======
-            # 5) Volver al Libro para iterar operación por operación e INTERCALAR adjuntos
-            try:
-                libro.bring_to_front()
-            except Exception:
-                pass
-
-
-            ya_agregados: set[tuple[str, int]] = set()  # evita duplicados exactos
-
-            for op in ops:
-                op_id   = op["id"]
-                op_tipo = op["tipo"]
-                titulo  = (op.get("titulo") or "").strip() or f"Operación {op_id}"
-
-                # Mostrar la operación para asegurar que su HTML esté completo
-                _mostrar_operacion(libro, op_id, op_tipo)
-
-                # 5.1) PDF paginado de ESTA operación (sin índice, sin basura)
-                pdf_op = _render_operacion_a_pdf_paginas(libro, op_id, context, p, temp_dir)
-                if pdf_op and pdf_op.exists():
-                    pdf_op = _pdf_sin_blancos(pdf_op)
-                    _mf(f"OPERACION · {titulo} · {pdf_op.name}")
-                    bloques.append((pdf_op, None))
-                    logging.info(f"[OP] {op_id}: agregado {pdf_op.name}")
-                else:
-                    logging.info(f"[OP:SKIP] {op_id}: no se pudo renderizar en PDF")
-
-                # 5.2) ADJUNTOS de esta operación (Libro + grilla)
-                pdfs_op: list[Path] = []
-                try:
-                    # Descargas "in-situ" dentro del Libro (Playwright expect_download)
-                    pdfs_op.extend(_descargar_adjuntos_de_operacion(libro, op_id, temp_dir))
-                except Exception:
-                    pass
-                # Más lo que vino desde la grilla (ya descargado)
-                pdfs_op.extend(pdfs_grid.get(op_id, []))
-
-                # 5.3) Normalizar cada adjunto: convertir si hace falta, deduplicar, estampar y limpiar blancos
-                for ap in pdfs_op:
-                    pth = ap
-                    if pth.suffix.lower() != ".pdf":
-                        pth = _ensure_pdf_fast(pth)
-
-                    try:
-                        key = (pth.name, pth.stat().st_size)
-                    except Exception:
-                        key = (pth.name, 0)
-
-                    if key in ya_agregados:
-                        continue
-                    ya_agregados.add(key)
-
-                    pth = _pdf_sin_blancos(pth)
-                    _mf(f"ADJUNTO · {titulo} · {pth.name}")
-                    hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    bloques.append((pth, hdr))
-                    logging.info(f"[MERGE] ADJ · {pth.name} (op {op_id})")
-
-            # 6) Adjuntos sin operación mapeada → al final
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             adj_sin = pdfs_grid.get("__SIN_OP__", [])
             if adj_sin:
                 logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
                 for pdf in adj_sin:
-<<<<<<< HEAD
                     pth = pdf if pdf.suffix.lower() == ".pdf" else (_ensure_pdf_fast(pdf) if '_ensure_pdf_fast' in globals() else _ensure_pdf(pdf))
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                         continue
                     _mf(f"ADJUNTO · (sin operación) · {pth.name}")
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
                     _push_pdf(pth, hdr)
-=======
-                    pth = pdf
-                    if pth.suffix.lower() != ".pdf":
-                        pth = _ensure_pdf_fast(pth)
-
-                    try:
-                        key = (pth.name, pth.stat().st_size)
-                    except Exception:
-                        key = (pth.name, 0)
-
-                    if key in ya_agregados:
-                        continue
-                    ya_agregados.add(key)
-
-                    pth = _pdf_sin_blancos(pth)
-                    _mf(f"ADJUNTO · (sin operación) · {pth.name}")
-                    hdr = ("ADJUNTO · (sin operación)") if STAMP else None
-                    bloques.append((pth, hdr))
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 
             if not bloques:
                 raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
 
-<<<<<<< HEAD
             # 9) Fusión final
-=======
-            # 7) Fusión final en el orden deseado (op -> adjuntos)
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
             fusionar_bloques_inline(bloques, out)
             _mf(f"==> PDF FINAL: {out.name}  (total bloques={len(bloques)})")
             logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques)}")
-<<<<<<< HEAD
             etapa("Listo: PDF final creado")
             messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
 
@@ -3530,28 +2949,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             except Exception: pass
             try: browser.close()
             except Exception: pass
-=======
-            messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
-
-        finally:
-            try:
-                context.close()
-            except Exception:
-                pass
-            try:
-                browser.close()
-            except Exception:
-                pass
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
             if not KEEP_WORK:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
 class TkQueueHandler(logging.Handler):
     """Handler de logging que empuja los mensajes a una queue para la UI."""
     def __init__(self, q):
@@ -3590,7 +2993,6 @@ class ProgressWin(Toplevel):
         try:
             while True:
                 msg = self.q.get_nowait()
-<<<<<<< HEAD
 
                 # Si es una etapa, actualizo el label de estado “en curso”
                 if msg.startswith("[ETAPA] "):
@@ -3598,18 +3000,13 @@ class ProgressWin(Toplevel):
                     self.lbl.config(text=f"Etapa: {etapa_txt}")
 
                 # En todos los casos, lo dejo asentado en el panel de texto
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
                 self.text.insert("end", msg + "\n")
                 self.text.see("end")
         except queue.Empty:
             pass
         self.after(100, self._poll)
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 4316f9605f2aabfb6de149cb7fea40a70dfe7dbc
     def _on_close(self):
         # Solo oculta la ventana; los logs siguen en debug.log
         self.withdraw()
