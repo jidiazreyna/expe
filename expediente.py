@@ -798,7 +798,6 @@ def _libro_scope(libro):
         except Exception:
             continue
     return libro
-
 def _listar_operaciones_rapido(libro):
     import re
     S = _libro_scope(libro)
@@ -819,17 +818,10 @@ def _listar_operaciones_rapido(libro):
 
     cont = S.locator("#indice, .indice, .nav-container").first
     if not cont.count():
-        # último intento: click al texto "Índice"
-        try:
-            S.get_by_text(re.compile(r"índice", re.I)).first.click()
-            S.wait_for_timeout(150)
-            cont = S.locator("#indice, .indice, .nav-container").first
-        except Exception:
-            pass
-    if not cont.count():
-        raise RuntimeError("No encontré el panel del Índice en 'Expediente como Libro'.")
+        # Fallback: trabajar sin contenedor (global en la página)
+        cont = S
 
-    # Expandir grupos colapsados
+    # Expandir grupos colapsados (si hubiera)
     for _ in range(20):
         t = cont.locator("a.nav-link.dropdown-toggle[aria-expanded='false'], .dropdown-toggle[aria-expanded='false']").first
         if not t.count(): break
@@ -839,7 +831,6 @@ def _listar_operaciones_rapido(libro):
             except Exception: pass
         S.wait_for_timeout(60)
 
-    # Anchors de ítems: onItemClick(...) o data-codigo
     anchors = cont.locator("a[onclick^='onItemClick'], a[data-codigo]")
     n = anchors.count()
     items = []
@@ -848,18 +839,16 @@ def _listar_operaciones_rapido(libro):
         oc = a.get_attribute("onclick") or ""
         data_id   = a.get_attribute("data-codigo")
         data_tipo = a.get_attribute("data-tipo")
-        m = re.search(r"onItemClick\('([^']+)'\s*,\s*'([^']+)'", oc)
-
+        # acepta '...' o "..."
+        m = re.search(r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]', oc)
         if m:
             op_id, tipo = m.group(1), m.group(2)
         elif data_id:
             op_id, tipo = data_id, (data_tipo or "")
         else:
             continue
-
         t = (a.inner_text() or "").strip()
         items.append({"id": op_id, "tipo": tipo, "titulo": t})
-
     return items
 
 
@@ -1692,7 +1681,7 @@ def _login_intranet(page, intra_user, intra_pass):
             try:
                 loc = sc.locator(sel).first
                 if loc.count():
-                    try: loc.wait_for(state="visible", timeout=1500)
+                    try: loc.wait_for(state="visible", timeout=2000)
                     except Exception: pass
                     if loc.is_visible():
                         return loc
@@ -1701,7 +1690,6 @@ def _login_intranet(page, intra_user, intra_pass):
         return None
 
     def _smart_fill(sc, el, val):
-        # algunos logins usan onfocus/onblur para “Usuario:”
         try:
             el.click()
             sc.wait_for_timeout(60)
@@ -1710,7 +1698,6 @@ def _login_intranet(page, intra_user, intra_pass):
         try:
             el.fill(val)
         except Exception:
-            # fallback: set value + eventos input para que el sitio lo tome
             try:
                 el.evaluate(
                     "(el,val)=>{el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); "
@@ -1719,57 +1706,83 @@ def _login_intranet(page, intra_user, intra_pass):
             except Exception:
                 pass
 
-    # SELECTORES (portal viejo: …$txtUserName / …$txtUserPassword)
     user_sels = [
         "#txtUserName", "#txtUsuario",
         "input[id$='UserName']", "input[name$='UserName']",
         "input[id$='txtUserName']", "input[name$='txtUserName']",
         "input[id*='UserLogin'][type='text']", "input[name*='UserLogin'][type='text']",
         "input[type='text'][name*='Usuario']", "input[type='text'][aria-label*='Usuario']",
+        # Angular/Material
+        "input[formcontrolname='username']", "input[name='username']",
     ]
     pass_sels = [
         "#txtUserPassword", "#txtContrasena",
         "input[id$='Password']", "input[name$='Password']",
         "input[id$='txtUserPassword']", "input[name$='txtUserPassword']",
         "input[type='password']",
+        # Angular/Material
+        "input[formcontrolname='password']", "input[name='password']",
     ]
     btn_sels = [
         "#btnLogIn", "#btnIngresar",
         "input[id$='btnLogIn']", "input[name$='btnLogIn']",
         "button[type='submit']", "input[type='submit']",
-        "xpath=//button[contains(.,'Ingresar') or contains(.,'Login') or contains(.,'Entrar')]",
-        "xpath=//input[@type='submit' and (contains(@value,'Ingresar') or contains(@value,'Login') or contains(@value,'Entrar'))]"
+        "xpath=//button[not(@disabled) and (contains(.,'Ingresar') or contains(.,'Iniciar') or contains(.,'Entrar'))]",
+        "xpath=//span[normalize-space()='Ingresar' or normalize-space()='Iniciar sesión']/ancestor::button[1]",
+        "button:has-text('Ingresar')", "button:has-text('Iniciar sesión')",
     ]
 
     target_scope = None; user_box = None; pass_box = None
     for sc in scopes:
         u = _first_visible(sc, user_sels)
-        p = _first_visible(sc, pass_sels)
-        if u and p:
-            target_scope, user_box, pass_box = sc, u, p
+        p_ = _first_visible(sc, pass_sels)
+        if u and p_:
+            target_scope, user_box, pass_box = sc, u, p_
             break
 
-    # Heurístico: si no encontramos ambos, agarramos password + primer textbox en el mismo scope
     if not (target_scope and user_box and pass_box):
         for sc in scopes:
-            p = _first_visible(sc, ["input[type='password']"])
-            if not p: continue
-            u = _first_visible(sc, ["input[type='text']"])
+            p_ = _first_visible(sc, ["input[type='password']"])
+            if not p_: continue
+            u = _first_visible(sc, ["input[type='text'], input[name='username']"])
             if u:
-                target_scope, user_box, pass_box = sc, u, p
+                target_scope, user_box, pass_box = sc, u, p_
                 break
 
     if not (target_scope and user_box and pass_box):
-        return  # no hay formulario visible en esta vista
+        return  # no hay formulario visible
 
     _kill_overlays(target_scope)
 
     _smart_fill(target_scope, user_box, intra_user)
     _smart_fill(target_scope, pass_box, intra_pass)
 
+    # 1) Enter sobre la contraseña (muchos logins Angular lo aceptan)
+    try:
+        pass_box.press("Enter")
+        target_scope.wait_for_load_state("networkidle")
+    except Exception:
+        pass
+
+    # Si ya entró, salir
+    try:
+        if target_scope.get_by_text(re.compile(r"\b(Aplicaciones|Mi\s*Escritorio|Desconectarse)\b", re.I)).first.count():
+            return
+    except Exception:
+        pass
+
+    # 2) Click cuando el botón esté habilitado
     btn = _first_visible(target_scope, btn_sels)
     clicked = False
-    if btn:
+    if btn and btn.count():
+        # esperar a que no esté disabled/aria-disabled=true
+        try:
+            target_scope.wait_for_function(
+                "(b)=>!b.disabled && b.getAttribute('aria-disabled')!=='true'",
+                arg=btn.element_handle(), timeout=4000
+            )
+        except Exception:
+            pass
         try:
             btn.click(timeout=3000); clicked = True
         except Exception:
@@ -1779,9 +1792,23 @@ def _login_intranet(page, intra_user, intra_pass):
             except Exception:
                 pass
 
-    # Último recurso: __doPostBack con el *name* real del botón
+    # 3) Últimos recursos: submit del form o __doPostBack si existe
     if not clicked:
         try:
+            # submit real del form (mejor para Angular que escucha 'submit')
+            btn_el = btn.element_handle() if btn else None
+            target_scope.evaluate("""(btn)=>{
+                const el = btn || document.querySelector("button[type=submit],input[type=submit]");
+                const form = el ? el.closest('form') : document.querySelector('form');
+                if (form) {
+                  if (form.requestSubmit) form.requestSubmit(el || undefined);
+                  else form.submit();
+                }
+            }""", btn_el)
+        except Exception:
+            pass
+        try:
+            # ASP.NET clásico
             unique = target_scope.locator(
                 "input[id$='btnLogIn'],input[name$='btnLogIn'],input[type='submit'],button[type='submit']"
             ).first.get_attribute("name")
@@ -1794,6 +1821,7 @@ def _login_intranet(page, intra_user, intra_pass):
         target_scope.wait_for_load_state("networkidle")
     except Exception:
         pass
+
 
 
 def _kill_overlays(page):
@@ -1847,19 +1875,21 @@ def _expandir_y_cargar_todo_el_libro(libro):
             pass
         orden.append(it)
     return orden
-
 def _mostrar_operacion(libro, op_id: str, tipo: str):
     S = _libro_scope(libro)
     _kill_overlays(S)
 
-    link = S.locator(f"a[onclick*=\"onItemClick('{op_id}'\"], a[data-codigo='{op_id}']").first
+    link = S.locator(
+        f"a[onclick*=\"onItemClick('{op_id}'\"], "
+        f"a[onclick*=\"onItemClick(\\\"{op_id}\\\"\"], "
+        f"a[data-codigo='{op_id}']"
+    ).first
     if link.count():
         try: link.click()
         except Exception:
             try: link.evaluate("el=>el.click()")
             except Exception: pass
     else:
-        # Fallback: función global si existe
         try:
             S.evaluate("""([id,t])=>{ if (window.onItemClick) onItemClick(id, t); }""", [op_id, tipo])
         except Exception:
@@ -1869,6 +1899,7 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
         S.wait_for_selector(f"[id='{op_id}'], [data-codigo='{op_id}']", timeout=3000)
     except Exception:
         S.wait_for_timeout(200)
+
 
 def _extraer_url_de_link(link, proxy_prefix: str) -> str | None:
     href = link.get_attribute("href") or ""
