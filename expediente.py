@@ -944,14 +944,17 @@ def _listar_operaciones_rapido(libro):
 
     _scroll_container(cont)
 
-    # Colector genérico (sirve para contenedor principal o para frames)
+# (asegurate de tener `import re` más arriba en _listar_operaciones_rapido)
+
+    # ── Colector genérico (sirve para contenedor principal o para frames) ──
     def _collect_from(scope):
         anchors = scope.locator(
-            "a[onclick^='onItemClick'], "
-            "a[data-codigo], "
-            "[role='button'][data-codigo], "
-            "li[data-codigo] a, "
-            "nav a[data-codigo]"
+            # onClick inline: onItemClick(...) o return onItemClick(...)
+            "a[onclick*='onItemClick('], "
+            # href javascript: onItemClick(...)
+            "a[href*='onItemClick('], "
+            # variantes por data-attrs
+            "a[data-codigo], [role='button'][data-codigo], li[data-codigo] a, nav a[data-codigo]"
         )
         n = anchors.count()
         items_local = []
@@ -959,14 +962,17 @@ def _listar_operaciones_rapido(libro):
 
         for i in range(n):
             a = anchors.nth(i)
-            oc = a.get_attribute("onclick") or ""
-            data_id = a.get_attribute("data-codigo")
+
+            href = a.get_attribute("href") or ""
+            oc   = a.get_attribute("onclick") or ""
+            data_id   = a.get_attribute("data-codigo")
             data_tipo = a.get_attribute("data-tipo")
 
             # onItemClick('ID','TIPO') o onItemClick("ID","TIPO")
+            # (buscamos en onclick **y** en href)
             m = re.search(
                 r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]',
-                oc or ""
+                (oc or "") + " " + (href or "")
             )
             if m:
                 op_id, tipo = m.group(1), m.group(2)
@@ -980,6 +986,8 @@ def _listar_operaciones_rapido(libro):
 
             try:
                 t = (a.inner_text() or "").strip()
+                if not t:
+                    t = (a.get_attribute("title") or "").strip()
             except Exception:
                 t = ""
 
@@ -2519,9 +2527,16 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
                     except Exception: loc.evaluate("el => el.click()")
                 d = dl.value
                 d.save_as(out)
+                # después de d.save_as(out) o de hp.pdf(...)
                 if out.exists() and out.stat().st_size > 1024:
+                    if _pdf_es_login_portal(out):
+                        logging.info("[PRINT:DL] Ignorado: es login del portal (no Libro).")
+                        try: out.unlink()
+                        except Exception: pass
+                        return None
                     logging.info(f"[PRINT:DL] PDF libro guardado: {out.name}")
                     return out
+
             except Exception:
                 # Si abrió el diálogo del navegador, no habrá download → seguimos al plan B
                 pass
