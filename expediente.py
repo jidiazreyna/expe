@@ -3051,9 +3051,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             )
 
             # Verificación de acceso:
-            # - Si hay ids, abrimos 1–3 y confirmamos que el modal NO traiga la leyenda de permisos insuficientes.
-            # - Si NO hay ids, probamos igualmente abrir "alguna operación" (fallback).
-            # Verificación de acceso (SEGURIDAD):
             acceso_ok = False
             if op_ids_rad:
                 ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:min(5, len(op_ids_rad))]
@@ -3247,9 +3244,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             except Exception: pass
             if not KEEP_WORK:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-
 
 class TkQueueHandler(logging.Handler):
     """Handler de logging que empuja los mensajes a una queue para la UI."""
