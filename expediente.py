@@ -138,6 +138,29 @@ def _is_tribunales(u: str) -> bool:
 from io import BytesIO
 import subprocess, shutil as _shutil
 
+def _kill_overlays(page):
+    """Oculta/remueve cortinas/overlays que pueden interceptar el click."""
+    try:
+        page.evaluate(
+            """
+            () => {
+                const sels = [
+                    '#divDialogCourtian_0', '.divDialogCourtian', '.divDialogCortina',
+                    '.ui-widget-overlay', '.ui-widget-shadow', '.modal-backdrop', '.modal[role=dialog]'
+                ];
+                for (const s of sels) {
+                    document.querySelectorAll(s).forEach(el => {
+                        el.style.pointerEvents = 'none';
+                        el.style.display = 'none';
+                        el.remove();
+                    });
+                }
+            }
+            """
+        )
+    except Exception:
+        pass
+
 def _asegurar_seccion_operaciones_visible(page):
     """Muestra la sección 'OPERACIONES' si está colapsada y la desplaza a la vista."""
     try:
@@ -248,18 +271,26 @@ def _operacion_pdf_si_permitida(sac, op_id: str, tmp_dir: Path) -> Path | None:
     # Abrir el modal (click → fallback JS directo)
     opened = False
     try:
+        _kill_overlays(scope)
+    except Exception:
+        pass
+    try:
         fila_link.scroll_into_view_if_needed()
     except Exception:
         pass
     try:
-        fila_link.click()
+        fila_link.click(force=True)
         opened = True
     except Exception:
         try:
-            fila_link.evaluate("el => el.click()")
+            fila_link.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}))")
             opened = True
         except Exception:
-            opened = False
+            try:
+                fila_link.evaluate("el => el.click()")
+                opened = True
+            except Exception:
+                opened = False
 
     if not opened:
         try:
@@ -578,16 +609,23 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
             if not loc.count():
                 continue
             try:
+                _kill_overlays(sc)
+            except Exception:
+                pass
+            try:
                 loc.scroll_into_view_if_needed()
             except Exception:
                 pass
             try:
-                loc.click()
+                loc.click(force=True)
             except Exception:
                 try:
-                    loc.evaluate("el=>el.click()")
+                    loc.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}))")
                 except Exception:
-                    continue
+                    try:
+                        loc.evaluate("el=>el.click()")
+                    except Exception:
+                        continue
 
             import re
             dialog = sac.locator(
@@ -684,10 +722,14 @@ def _op_visible_con_contenido_en_radiografia(sac, op_id: str) -> bool:
                 return True
             except Exception:
                 try:
-                    link.evaluate("el => el.click()")
+                    link.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}))")
                     return True
                 except Exception:
-                    pass
+                    try:
+                        link.evaluate("el => el.click()")
+                        return True
+                    except Exception:
+                        pass
         try:
             sc.evaluate("id => { try { if (window.VerDecretoHtml) VerDecretoHtml(id) } catch(e){} }", op_id)
             return True
@@ -722,14 +764,18 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
         ).first
         if link.count():
             try:
+                _kill_overlays(sc)
+            except Exception:
+                pass
+            try:
                 link.scroll_into_view_if_needed()
             except Exception:
                 pass
             try:
-                link.click()
+                link.click(force=True)
             except Exception:
                 try:
-                    link.evaluate("el => el.click()")
+                    link.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}))")
                 except Exception:
                     try:
                         sc.evaluate("id => { if (window.VerDecretoHtml) VerDecretoHtml(id) }", op_id)
