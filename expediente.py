@@ -1243,13 +1243,27 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     qs = f"idExpediente={exp_id}" + (f"&key={key}" if key else "") + (f"&nivelAcceso={lvl}" if lvl else "")
     url = proxy_prefix + base + "?" + qs
 
-    sac.goto(url, wait_until="domcontentloaded")
     try:
-        libro = sac.wait_for_event("popup", timeout=1500)
+        # Abrir el Libro en una nueva pestaña para no perder la Radiografía
+        with sac.context.expect_page() as pop:
+            sac.evaluate("url => window.open(url, '_blank')", url)
+        libro = pop.value
         libro.wait_for_load_state("domcontentloaded")
+        try:
+            libro.set_default_timeout(90_000)
+            libro.set_default_navigation_timeout(90_000)
+        except Exception:
+            pass
         return libro
     except Exception:
-        return sac
+        # Fallback: navegar en la pestaña actual (menos robusto)
+        sac.goto(url, wait_until="domcontentloaded")
+        try:
+            libro = sac.wait_for_event("popup", timeout=1500)
+            libro.wait_for_load_state("domcontentloaded")
+            return libro
+        except Exception:
+            return sac
 
 
 def _abrir_libro(sac, intra_user=None, intra_pass=None, nro_exp=None):
