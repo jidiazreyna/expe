@@ -2156,11 +2156,24 @@ def _ir_a_radiografia(sac):
     """
     Preferir el menú de SAC → “Radiografía”. Si no aparece, usar URL con el mismo /proxy/.
     """
+    import re
     try:
-        sac.get_by_role("link", name=re.compile(r"Radiograf[íi]a", re.I)).first.click()
-        sac.wait_for_load_state("networkidle")
-        if "Radiografia.aspx" in sac.url:
-            return sac
+        sac.wait_for_load_state("domcontentloaded")
+    except Exception:
+        pass
+    try:
+        matcher = re.compile(r"Radiograf[íi]a", re.I)
+        link = sac.get_by_role("link", name=matcher).first
+        if not link.count():
+            link = sac.locator("a", has_text=matcher).first
+        if link.count():
+            link.click()
+            try:
+                sac.wait_for_load_state("domcontentloaded")
+            except Exception:
+                pass
+            if "Radiografia.aspx" in (sac.url or ""):
+                return sac
     except Exception:
         pass
 
