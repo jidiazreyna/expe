@@ -70,6 +70,24 @@ def _is_real_pdf(path: Path) -> bool:
     except Exception:
         return False
 
+def _pdf_es_login_portal(path: Path) -> bool:
+    txt = ""
+    try:
+        import fitz
+        doc = fitz.open(str(path))
+        for i in range(min(doc.page_count, 2)):
+            txt += doc[i].get_text("text") or ""
+        doc.close()
+    except Exception:
+        try:
+            for p in PdfReader(str(path)).pages[:2]:
+                txt += p.extract_text() or ""
+        except Exception:
+            return False
+    t = (txt or "").lower()
+    return ("ingrese nombre de usuario y contraseña" in t) or ("portal" in t and "intranet" in t)
+
+
 def _pdf_contiene_mensaje_permiso(path: Path) -> bool:
     """Heurística: si el PDF trae el cartel de 'no tiene permisos', lo descartamos."""
     txt = ""
@@ -798,58 +816,147 @@ def _libro_scope(libro):
         except Exception:
             continue
     return libro
+
 def _listar_operaciones_rapido(libro):
+    """
+    Explora el 'Índice' del Libro y devuelve una lista de operaciones visibles:
+    [{id: <op_id>, tipo: <tipo>, titulo: <texto del link>}]
+
+    - Tolera distintas skins (tabs Bootstrap, data-codigo, onItemClick, etc.)
+    - Expande grupos colapsados.
+    - Hace scroll del contenedor para forzar render si hay virtualización.
+    - Si no encuentra en el scope principal, prueba en frames.
+    """
     import re
+
     S = _libro_scope(libro)
+
+    # Darle aire al front-end para que pinte el índice
     try:
         S.wait_for_load_state("domcontentloaded")
+        S.wait_for_load_state("networkidle")
+        S.wait_for_timeout(300)
     except Exception:
         pass
 
-    # Mostrar la pestaña "Índice" si está en tabs Bootstrap
+    # Si el índice está en una pestaña ("Índice"), mostrarla
     try:
         tab = S.locator("[data-bs-target='#indice'], a[href='#indice'], [aria-controls='indice']").first
         if tab.count():
-            try: tab.click()
-            except Exception: tab.evaluate("el=>el.click()")
+            try:
+                tab.click()
+            except Exception:
+                tab.evaluate("el=>el.click()")
             S.wait_for_timeout(150)
     except Exception:
         pass
 
+    # Tomar contenedor del índice si existe; si no, trabajar sobre toda la página
     cont = S.locator("#indice, .indice, .nav-container").first
     if not cont.count():
-        # Fallback: trabajar sin contenedor (global en la página)
         cont = S
 
-    # Expandir grupos colapsados (si hubiera)
+    # Expandir grupos colapsados (dropdowns, acordeones, etc.)
     for _ in range(20):
-        t = cont.locator("a.nav-link.dropdown-toggle[aria-expanded='false'], .dropdown-toggle[aria-expanded='false']").first
-        if not t.count(): break
-        try: t.click()
+        t = cont.locator(
+            "a.nav-link.dropdown-toggle[aria-expanded='false'], "
+            ".dropdown-toggle[aria-expanded='false']"
+        ).first
+        if not t.count():
+            break
+        try:
+            t.click()
         except Exception:
-            try: t.evaluate("el=>el.click()")
-            except Exception: pass
-        S.wait_for_timeout(60)
+            try:
+                t.evaluate("el=>el.click()")
+            except Exception:
+                pass
+        # Dejar que se renderice lo abierto
+        try:
+            S.wait_for_load_state("domcontentloaded")
+            S.wait_for_load_state("networkidle")
+        except Exception:
+            pass
+        S.wait_for_timeout(600)
 
-    anchors = cont.locator("a[onclick^='onItemClick'], a[data-codigo]")
-    n = anchors.count()
-    items = []
-    for i in range(n):
-        a = anchors.nth(i)
-        oc = a.get_attribute("onclick") or ""
-        data_id   = a.get_attribute("data-codigo")
-        data_tipo = a.get_attribute("data-tipo")
-        # acepta '...' o "..."
-        m = re.search(r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]', oc)
-        if m:
-            op_id, tipo = m.group(1), m.group(2)
-        elif data_id:
-            op_id, tipo = data_id, (data_tipo or "")
-        else:
-            continue
-        t = (a.inner_text() or "").strip()
-        items.append({"id": op_id, "tipo": tipo, "titulo": t})
+    # Pequeño helper para hacer scroll del contenedor y forzar render perezoso
+    def _scroll_container(c):
+        try:
+            # Si es el contenedor del índice, scrollear varias "paginadas"
+            for _ in range(8):
+                try:
+                    c.evaluate("(el)=>{ el.scrollBy(0, el.clientHeight || 600) }")
+                except Exception:
+                    # Si no es scrollable, scrolleo la página
+                    try:
+                        S.mouse.wheel(0, 800)
+                    except Exception:
+                        pass
+                S.wait_for_timeout(80)
+        except Exception:
+            pass
+
+    _scroll_container(cont)
+
+    # Colector genérico (sirve para contenedor principal o para frames)
+    def _collect_from(scope):
+        anchors = scope.locator(
+            "a[onclick^='onItemClick'], "
+            "a[data-codigo], "
+            "[role='button'][data-codigo], "
+            "li[data-codigo] a, "
+            "nav a[data-codigo]"
+        )
+        n = anchors.count()
+        items_local = []
+        vistos = set()
+
+        for i in range(n):
+            a = anchors.nth(i)
+            oc = a.get_attribute("onclick") or ""
+            data_id = a.get_attribute("data-codigo")
+            data_tipo = a.get_attribute("data-tipo")
+
+            # onItemClick('ID','TIPO') o onItemClick("ID","TIPO")
+            m = re.search(
+                r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]',
+                oc or ""
+            )
+            if m:
+                op_id, tipo = m.group(1), m.group(2)
+            elif data_id:
+                op_id, tipo = data_id, (data_tipo or "")
+            else:
+                continue
+
+            if op_id in vistos:
+                continue
+
+            try:
+                t = (a.inner_text() or "").strip()
+            except Exception:
+                t = ""
+
+            items_local.append({"id": op_id, "tipo": tipo, "titulo": t})
+            vistos.add(op_id)
+
+        return items_local
+
+    # 1) Intento en el contenedor / página actual
+    items = _collect_from(cont)
+
+    # 2) Si no hay nada, intentar en frames (algunas skins montan el índice en un frame)
+    if not items:
+        for fr in list(libro.frames):
+            try:
+                items = _collect_from(fr)
+                if items:
+                    break
+            except Exception:
+                continue
+
     return items
+
 
 
 def _url_from_ver_adjunto(js_call: str, proxy_prefix: str) -> str | None:
@@ -2374,6 +2481,37 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
                 pass
         except Exception:
             continue
+    # justo antes de lanzar headless:
+    stor = libro.evaluate("""() => ({
+    local: Object.fromEntries(Object.entries(localStorage)),
+    session: Object.fromEntries(Object.entries(sessionStorage)),
+    })""")
+
+    state_file = tmp_dir / "state.json"
+    context.storage_state(path=str(state_file))
+
+    hbrowser = p.chromium.launch(headless=True, args=["--disable-gpu","--no-sandbox","--disable-dev-shm-usage"])
+    hctx = hbrowser.new_context(storage_state=str(state_file), viewport={"width":1366,"height":900})
+    hp = hctx.new_page()
+
+    # reinyectar storages ANTES de navegar
+    import json
+    hp.add_init_script(f"""
+    (function() {{
+        try {{
+        localStorage.clear();
+        const L = {json.dumps(stor["local"])};
+        for (const k in L) localStorage.setItem(k, L[k]);
+        sessionStorage.clear();
+        const S = {json.dumps(stor["session"])};
+        for (const k in S) sessionStorage.setItem(k, S[k]);
+        }} catch (e) {{}}
+    }})();
+    """)
+
+    hp.goto(libro.url, wait_until="networkidle")
+    hp.emulate_media(media="print")
+    hp.pdf(path=str(out), format="A4", print_background=True, prefer_css_page_size=True)
 
     # 2) Fallback HEADLESS: mismo estado de sesión + Page.pdf()
     try:
