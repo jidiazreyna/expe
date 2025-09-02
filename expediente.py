@@ -779,17 +779,21 @@ def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
     with open(destino, "wb") as f:
         w.write(f)
 
-
 def _libro_scope(libro):
-    """Devuelve la página/frame que realmente contiene el índice y las operaciones."""
+    """
+    Devuelve la page/frame que realmente contiene el índice y las operaciones.
+    Ahora prioriza el contenedor del Índice y, si no, los anchors con data-codigo.
+    """
     try:
-        if libro.locator("a[onclick^='onItemClick']").first.count():
+        if libro.locator("#indice, .nav-container, .indice, [aria-controls='indice']").first.count():
             return libro
     except Exception:
         pass
     for fr in libro.frames:
         try:
-            if fr.locator("a[onclick^='onItemClick']").first.count():
+            if fr.locator("#indice, .nav-container, .indice, [aria-controls='indice']").first.count():
+                return fr
+            if fr.locator("a[onclick^='onItemClick'], [data-codigo]").first.count():
                 return fr
         except Exception:
             continue
@@ -803,41 +807,61 @@ def _listar_operaciones_rapido(libro):
     except Exception:
         pass
 
-    cont = S.locator("#indice, .nav-container").first
+    # Mostrar la pestaña "Índice" si está en tabs Bootstrap
+    try:
+        tab = S.locator("[data-bs-target='#indice'], a[href='#indice'], [aria-controls='indice']").first
+        if tab.count():
+            try: tab.click()
+            except Exception: tab.evaluate("el=>el.click()")
+            S.wait_for_timeout(150)
+    except Exception:
+        pass
+
+    cont = S.locator("#indice, .indice, .nav-container").first
     if not cont.count():
+        # último intento: click al texto "Índice"
         try:
             S.get_by_text(re.compile(r"índice", re.I)).first.click()
-            S.wait_for_timeout(200)
-            cont = S.locator("#indice, .nav-container").first
+            S.wait_for_timeout(150)
+            cont = S.locator("#indice, .indice, .nav-container").first
         except Exception:
             pass
     if not cont.count():
         raise RuntimeError("No encontré el panel del Índice en 'Expediente como Libro'.")
 
-    # expandir grupos colapsados (sin abrir cada operación)
+    # Expandir grupos colapsados
     for _ in range(20):
-        t = cont.locator("a.nav-link.dropdown-toggle[aria-expanded='false']").first
-        if not t.count():
-            break
-        try:
-            t.click()
+        t = cont.locator("a.nav-link.dropdown-toggle[aria-expanded='false'], .dropdown-toggle[aria-expanded='false']").first
+        if not t.count(): break
+        try: t.click()
         except Exception:
-            try: t.evaluate("el => el.click()")
+            try: t.evaluate("el=>el.click()")
             except Exception: pass
-        S.wait_for_timeout(50)
+        S.wait_for_timeout(60)
 
-    anchors = cont.locator("a[onclick^='onItemClick']")
+    # Anchors de ítems: onItemClick(...) o data-codigo
+    anchors = cont.locator("a[onclick^='onItemClick'], a[data-codigo]")
     n = anchors.count()
     items = []
     for i in range(n):
         a = anchors.nth(i)
         oc = a.get_attribute("onclick") or ""
+        data_id   = a.get_attribute("data-codigo")
+        data_tipo = a.get_attribute("data-tipo")
         m = re.search(r"onItemClick\('([^']+)'\s*,\s*'([^']+)'", oc)
-        if not m:
+
+        if m:
+            op_id, tipo = m.group(1), m.group(2)
+        elif data_id:
+            op_id, tipo = data_id, (data_tipo or "")
+        else:
             continue
+
         t = (a.inner_text() or "").strip()
-        items.append({"id": m.group(1), "tipo": m.group(2), "titulo": t})
+        items.append({"id": op_id, "tipo": tipo, "titulo": t})
+
     return items
+
 
 def _url_from_ver_adjunto(js_call: str, proxy_prefix: str) -> str | None:
     """
@@ -1803,85 +1827,41 @@ def _ensure_public_apps(page):
 
 # ───────────────────────── CARGA DEL LIBRO ─────────────────────────────
 def _expandir_y_cargar_todo_el_libro(libro):
-    """
-    Devuelve lista de dicts [{'id':op_id, 'tipo':tipo, 'titulo':texto}], en orden.
-    Hace clic en cada item para precargarlo.
-    """
-    import re
     S = _libro_scope(libro)
-
     try:
         S.wait_for_load_state("domcontentloaded")
         S.wait_for_load_state("networkidle")
     except Exception:
         pass
 
-    cont = S.locator("#indice, .nav-container").first
-    if not cont.count():
-        try:
-            S.get_by_text(re.compile(r"índice", re.I)).first.click()
-            S.wait_for_timeout(200)
-            cont = S.locator("#indice, .nav-container").first
-        except Exception:
-            pass
-    if not cont.count():
-        raise RuntimeError("No encontré el panel del Índice en 'Expediente como Libro'.")
-
-    # expandir grupos colapsados
-    for _ in range(20):
-        t = cont.locator("a.nav-link.dropdown-toggle[aria-expanded='false']").first
-        if not t.count(): break
-        try: t.scroll_into_view_if_needed()
-        except Exception: pass
-        try: t.click()
-        except Exception:
-            try: t.evaluate("el => el.click()")
-            except Exception: pass
-        S.wait_for_timeout(80)
-
-    anchors = cont.locator("a[onclick^='onItemClick']")
-    n = anchors.count()
-    items = []
-    for i in range(n):
-        a = anchors.nth(i)
-        oc = a.get_attribute("onclick") or ""
-        m = re.search(r"onItemClick\('([^']+)'\s*,\s*'([^']+)'", oc)
-        if not m:
-            continue
-        t = (a.inner_text() or "").strip()
-        items.append({"id": m.group(1), "tipo": m.group(2), "titulo": t})
-
-    # precargar todas
+    items = _listar_operaciones_rapido(libro)
     orden = []
     for it in items:
+        _mostrar_operacion(libro, it["id"], it.get("tipo",""))
         try:
-            a = cont.locator(f"a[onclick*=\"onItemClick('{it['id']}'\"]").first
-            try: a.click(timeout=700)
-            except Exception:
-                try: S.evaluate("([id,t]) => onItemClick && onItemClick(id,t)", [it["id"], it["tipo"]])
-                except Exception: pass
-            S.wait_for_selector(f"[id='{it['id']}'], [data-codigo='{it['id']}']", timeout=1200)
+            S.wait_for_selector(f"[id='{it['id']}'], [data-codigo='{it['id']}']", timeout=1500)
         except Exception:
             pass
         orden.append(it)
-
     return orden
 
 def _mostrar_operacion(libro, op_id: str, tipo: str):
     S = _libro_scope(libro)
-    # Intento clic al link visible del índice
-    link = S.locator(f"a[onclick*=\"onItemClick('{op_id}'\"]").first
+    _kill_overlays(S)
+
+    link = S.locator(f"a[onclick*=\"onItemClick('{op_id}'\"], a[data-codigo='{op_id}']").first
     if link.count():
         try: link.click()
         except Exception:
-            try: link.evaluate("el => el.click()")
+            try: link.evaluate("el=>el.click()")
             except Exception: pass
     else:
-        # Fallback: invocar la función JS
+        # Fallback: función global si existe
         try:
-            S.evaluate("""([id,t]) => { if (window.onItemClick) onItemClick(id, t); }""", [op_id, tipo])
+            S.evaluate("""([id,t])=>{ if (window.onItemClick) onItemClick(id, t); }""", [op_id, tipo])
         except Exception:
             pass
+
     try:
         S.wait_for_selector(f"[id='{op_id}'], [data-codigo='{op_id}']", timeout=3000)
     except Exception:
@@ -2232,71 +2212,29 @@ def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_p
     return sac
 
 def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
-    """
-    Modo UNIVERSAL:
-    - Si estás en Teletrabajo → hace login en Teletrabajo, abre 'Portal de Aplicaciones PJ', luego SAC.
-    - Si estás en Intranet directa → salta Teletrabajo y entra por MyDesktop.aspx a SAC.
-    """
     page = context.new_page()
     page.set_default_timeout(12000)
     page.set_default_navigation_timeout(15000)
 
-    use_tele = bool(tele_user and tele_pass)
-
-    # 1) Intento Teletrabajo (si no aplica o falla, caemos a Intranet directa)
-    if use_tele:
-        try:
-            page.goto(TELETRABAJO_URL, wait_until="domcontentloaded")
-            if _is_teletrabajo(page.url) or page.locator("text=Portal de Aplicaciones PJ").first.count():
-                # Flujo original Teletrabajo
-                _fill_first(page, ['#username','input[name="username"]','input[name="UserName"]','input[type="text"]'], tele_user)
-                _fill_first(page, ['#password','input[name="password"]','input[type="password"]'], tele_pass)
-                if not _click_first(page, ['text=Continuar','button[type="submit"]','input[type="submit"]']):
-                    page.keyboard.press("Enter")
-                page.wait_for_load_state("networkidle")
-                _handle_loginconfirm(page)
-                _goto_portal_grid(page)  # grilla angular
-                page = _open_portal_aplicaciones_pj(page)  # Tile "Portal de Aplicaciones PJ"
-                _login_intranet(page, intra_user, intra_pass)  # por si pide credenciales ahí
-                sac = _open_sac_desde_portal(page)
-                if _is_proxy_error(sac):
-                    _goto_portal_grid(page)
-                    page = _open_portal_aplicaciones_pj(page)
-                    _login_intranet(page, intra_user, intra_pass)
-                    sac = _open_sac_desde_portal(page)
-                return _ir_a_radiografia(sac)
-        except Exception:
-            pass  # seguimos a Intranet directa
-
-    # 2) Intranet directa
+    # 1) Preferir Intranet directa
     try:
         page.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
-    except Exception:
-        # Último recurso: ir directo al home del portal
-        try:
-            page.goto(INTRANET_HOME_URL, wait_until="domcontentloaded")
-        except Exception:
-            pass
-
-    _login_intranet(page, intra_user, intra_pass)
-
-    if "aplicaciones.tribunales.gov.ar" not in (page.url or ""):
-        try:
+        _login_intranet(page, intra_user, intra_pass)
+        if "aplicaciones.tribunales.gov.ar" not in (page.url or ""):
             _ensure_public_apps(page)
+        sac = _open_sac_desde_portal(page)
+        return _ir_a_radiografia(sac)
+    except Exception:
+        pass
+
+    # 2) Fallback Teletrabajo solo si hay credenciales
+    if tele_user and tele_pass:
+        try:
+            return abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass)
         except Exception:
             pass
 
-    # Abrir SAC desde el menú de Aplicaciones
-    try:
-        sac = _open_sac_desde_portal(page)
-    except Exception:
-        # Fallback duro: ir directo al menú del SAC
-        proxy_prefix = _get_proxy_prefix(page)  # "" si no hay proxy
-        page.goto(proxy_prefix + SAC_MENU_DEFAULT_URL, wait_until="domcontentloaded")
-        sac = page
-
-    return _ir_a_radiografia(sac)
-
+    raise RuntimeError("No pude abrir el SAC ni por Intranet ni por Teletrabajo.")
 
 def _cerrar_indice_libro(libro):
     """
