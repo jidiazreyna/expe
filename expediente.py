@@ -1668,11 +1668,14 @@ def _open_portal_aplicaciones_pj(page):
 # ───────────────────────── Intranet helpers ────────────────────────────
 def _login_intranet(page, intra_user, intra_pass):
     """
-    Login en la PÁGINA o en el FRAME que contenga el formulario.
+    Login en la PÁGINA o en el FRAME que contenga el formulario (portal viejo o nuevo).
     Si ya ve “Aplicaciones” / “Mi Escritorio” / “Desconectarse”, asume sesión activa.
     """
     import re
-    page.wait_for_load_state("domcontentloaded")
+    try:
+        page.wait_for_load_state("domcontentloaded")
+    except Exception:
+        pass
 
     scopes = [page] + list(page.frames)
 
@@ -1684,7 +1687,6 @@ def _login_intranet(page, intra_user, intra_pass):
         except Exception:
             pass
 
-    # Helpers
     def _first_visible(sc, selectors):
         for sel in selectors:
             try:
@@ -1698,32 +1700,48 @@ def _login_intranet(page, intra_user, intra_pass):
                 pass
         return None
 
-    # Intentar encontrar usuario + password en algún scope (página o frame)
+    def _smart_fill(sc, el, val):
+        # algunos logins usan onfocus/onblur para “Usuario:”
+        try:
+            el.click()
+            sc.wait_for_timeout(60)
+        except Exception:
+            pass
+        try:
+            el.fill(val)
+        except Exception:
+            # fallback: set value + eventos input para que el sitio lo tome
+            try:
+                el.evaluate(
+                    "(el,val)=>{el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); "
+                    "el.focus(); el.value=val; el.dispatchEvent(new Event('input',{bubbles:true}));}", val
+                )
+            except Exception:
+                pass
+
+    # SELECTORES (portal viejo: …$txtUserName / …$txtUserPassword)
     user_sels = [
         "#txtUserName", "#txtUsuario",
-        "input[id='username']", "input[name='username']",
         "input[id$='UserName']", "input[name$='UserName']",
+        "input[id$='txtUserName']", "input[name$='txtUserName']",
         "input[id*='UserLogin'][type='text']", "input[name*='UserLogin'][type='text']",
-        "input[type='text'][name*='Usuario']",
-        "input[type='text'][aria-label*='Usuario']",
+        "input[type='text'][name*='Usuario']", "input[type='text'][aria-label*='Usuario']",
     ]
     pass_sels = [
         "#txtUserPassword", "#txtContrasena",
-        "input[id='password']", "input[name='password']",
         "input[id$='Password']", "input[name$='Password']",
+        "input[id$='txtUserPassword']", "input[name$='txtUserPassword']",
         "input[type='password']",
     ]
     btn_sels = [
         "#btnLogIn", "#btnIngresar",
+        "input[id$='btnLogIn']", "input[name$='btnLogIn']",
         "button[type='submit']", "input[type='submit']",
         "xpath=//button[contains(.,'Ingresar') or contains(.,'Login') or contains(.,'Entrar')]",
         "xpath=//input[@type='submit' and (contains(@value,'Ingresar') or contains(@value,'Login') or contains(@value,'Entrar'))]"
     ]
 
-    target_scope = None
-    user_box = None
-    pass_box = None
-
+    target_scope = None; user_box = None; pass_box = None
     for sc in scopes:
         u = _first_visible(sc, user_sels)
         p = _first_visible(sc, pass_sels)
@@ -1731,67 +1749,52 @@ def _login_intranet(page, intra_user, intra_pass):
             target_scope, user_box, pass_box = sc, u, p
             break
 
-    # Heurístico: si no encontramos ambos, tomamos el primer password visible y el textbox más cercano en ese mismo scope
+    # Heurístico: si no encontramos ambos, agarramos password + primer textbox en el mismo scope
     if not (target_scope and user_box and pass_box):
         for sc in scopes:
             p = _first_visible(sc, ["input[type='password']"])
-            if not p:
-                continue
-            # username candidate: el primer input de texto visible en el mismo contenedor
+            if not p: continue
             u = _first_visible(sc, ["input[type='text']"])
             if u:
                 target_scope, user_box, pass_box = sc, u, p
                 break
 
     if not (target_scope and user_box and pass_box):
-        # No hay formulario visible: nada que hacer
-        return
+        return  # no hay formulario visible en esta vista
 
-    # Limpiar overlays que interceptan clicks
     _kill_overlays(target_scope)
 
-    # Completar credenciales (fill limpia el contenido previo)
-    try:
-        user_box.click()
-    except Exception:
-        pass
-    user_box.fill(intra_user)
+    _smart_fill(target_scope, user_box, intra_user)
+    _smart_fill(target_scope, pass_box, intra_pass)
 
-    try:
-        pass_box.click()
-    except Exception:
-        pass
-    pass_box.fill(intra_pass)
-
-    # Click al botón dentro del MISMO scope
     btn = _first_visible(target_scope, btn_sels)
+    clicked = False
     if btn:
         try:
-            btn.click(timeout=3000)
+            btn.click(timeout=3000); clicked = True
         except Exception:
             _kill_overlays(target_scope)
             try:
-                btn.click(force=True, timeout=2000)
+                btn.click(force=True, timeout=2000); clicked = True
             except Exception:
-                # Último recurso: postback típico
-                try:
-                    target_scope.evaluate(
-                        "() => { try { __doPostBack('ctl00$ctl00$Sheader$body$UserLogin$btnLogIn','') } catch(e) {} }"
-                    )
-                except Exception:
-                    pass
-    else:
-        # Sin botón visible, intentamos Enter en el password
+                pass
+
+    # Último recurso: __doPostBack con el *name* real del botón
+    if not clicked:
         try:
-            pass_box.press("Enter")
+            unique = target_scope.locator(
+                "input[id$='btnLogIn'],input[name$='btnLogIn'],input[type='submit'],button[type='submit']"
+            ).first.get_attribute("name")
+            if unique:
+                target_scope.evaluate("(n)=>{try{__doPostBack && __doPostBack(n,'')}catch(e){}}", unique)
         except Exception:
             pass
 
-    # Esperar a que cargue (si el login fue correcto cambiamos de vista)
     try:
         target_scope.wait_for_load_state("networkidle")
     except Exception:
         pass
+
 
 def _kill_overlays(page):
     """Oculta/remueve cortinas/overlays que interceptan el click (jQuery UI / modales)."""
