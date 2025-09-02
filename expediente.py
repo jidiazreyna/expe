@@ -3302,7 +3302,6 @@ class ProgressWin(Toplevel):
             pass
         self.after(100, self._poll)
 
-
     def _on_close(self):
         # Solo oculta la ventana; los logs siguen en debug.log
         self.withdraw()
