@@ -897,8 +897,16 @@ def _listar_operaciones_rapido(libro):
 
     def _iter_frames(scope):
         yield scope
+        children = []
+        for attr in ("frames", "child_frames"):
+            try:
+                children = getattr(scope, attr)
+                if children:
+                    break
+            except Exception:
+                pass
         try:
-            for fr in scope.frames:
+            for fr in children:
                 yield from _iter_frames(fr)
         except Exception:
             pass
@@ -1823,6 +1831,7 @@ def _open_portal_aplicaciones_pj(page):
 
 # ───────────────────────── Intranet helpers ────────────────────────────
 def _login_intranet(page, intra_user, intra_pass):
+    logging.info("[LOGIN] Buscando formulario de Intranet")
     """
     Login en la PÁGINA o en el FRAME que contenga el formulario (portal viejo o nuevo).
     Si ya ve “Aplicaciones” / “Mi Escritorio” / “Desconectarse”, asume sesión activa.
@@ -1839,6 +1848,7 @@ def _login_intranet(page, intra_user, intra_pass):
     for sc in scopes:
         try:
             if sc.get_by_text(re.compile(r"\b(Aplicaciones|Mi\s*Escritorio|Desconectarse)\b", re.I)).first.count():
+                logging.info("[LOGIN] Sesión ya activa (no se requirió login)")
                 return
         except Exception:
             pass
@@ -1854,6 +1864,7 @@ def _login_intranet(page, intra_user, intra_pass):
                         return loc
             except Exception:
                 pass
+        logging.info("[LOGIN] No se encontró formulario visible en la página/frames")
         return None
 
     def _smart_fill(sc, el, val):
@@ -1890,6 +1901,7 @@ def _login_intranet(page, intra_user, intra_pass):
         # Angular/Material
         "input[formcontrolname='password']", "input[name='password']",
     ]
+    logging.info("[LOGIN] Usuario y contraseña completados; enviando formulario…")
     btn_sels = [
         "#btnLogIn", "#btnIngresar",
         "input[id$='btnLogIn']", "input[name$='btnLogIn']",
@@ -1928,6 +1940,8 @@ def _login_intranet(page, intra_user, intra_pass):
     try:
         pass_box.press("Enter")
         target_scope.wait_for_load_state("networkidle")
+        logging.info(f"[LOGIN] Post-login · url_actual={getattr(target_scope, 'url', None)}")
+
     except Exception:
         pass
 
@@ -2085,6 +2099,19 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
                     pass
 
     if not clicked:
+        # si tipo vino vacío, intentar inferirlo del DOM
+        if not tipo:
+            try:
+                loc = S.locator(
+                    f"a[onclick*=\"onItemClick('{op_id}'\"], a[href*=\"onItemClick('{op_id}'\"]"
+                ).first
+                if loc.count():
+                    oc = (loc.get_attribute("onclick") or "") + " " + (loc.get_attribute("href") or "")
+                    m = re.search(r"onItemClick\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]([^'\"]+)['\"]", oc)
+                    if m: tipo = m.group(1)
+            except Exception:
+                pass
+
         # dispara onItemClick en cualquier frame que lo tenga
         for sc in [S] + list(S.frames):
             try:
@@ -2217,6 +2244,7 @@ def _open_sac_desde_portal_teletrabajo(page):
     Abre el menú 'Aplicaciones' (img#imgMenuServiciosPrivadas) y entra a 'SAC Multifuero'.
     Es el flujo que ya te funcionaba y NO usa navegación directa sin proxy.
     """
+    logging.info("[NAV] Intentando abrir 'SAC Multifuero' desde portal actual")
     import re
     try:
         page.wait_for_load_state("domcontentloaded")
@@ -2252,6 +2280,7 @@ def _open_sac_desde_portal_teletrabajo(page):
         try:
             trigger.click(force=True)
         except Exception:
+            logging.info("[NAV] Link a 'SAC Multifuero' localizado; abriendo…")
             try: trigger.evaluate("el => el.click()")
             except Exception: pass
         scope.wait_for_timeout(250)
@@ -2273,6 +2302,7 @@ def _open_sac_desde_portal_teletrabajo(page):
             link.click()
         sac = pop.value
         sac.wait_for_load_state("domcontentloaded")
+        logging.info("[NAV] SAC abierto desde portal")
         return sac
     except Exception:
         pass
@@ -2456,10 +2486,15 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     # 1) Preferir Intranet directa
     try:
         page.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
+        logging.info("[OPEN] Cargado login de Intranet")
         _login_intranet(page, intra_user, intra_pass)
+        logging.info(f"[LOGIN] Intento de login en Intranet · url_actual={page.url}")
         if "aplicaciones.tribunales.gov.ar" not in (page.url or ""):
             _ensure_public_apps(page)
+            logging.info("[NAV] En 'Aplicaciones' (PublicApps.aspx)")
         sac = _open_sac_desde_portal(page)
+        logging.info(f"[NAV] Ingresando al SAC desde portal · destino={getattr(sac,'url', None)}")
+
         return _ir_a_radiografia(sac)
     except Exception:
         pass
@@ -2467,6 +2502,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     # 2) Fallback Teletrabajo solo si hay credenciales
     if tele_user and tele_pass:
         try:
+            logging.info("[FALLBACK] Intento abrir por Teletrabajo (VPN)")
             return abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass)
         except Exception:
             pass
@@ -2958,20 +2994,23 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
         temp_dir = Path(tempfile.mkdtemp())
 
     def _mf(line: str):
-        return
+        logging.info(line)
     etapa("Preparando entorno y navegador")
     with sync_playwright() as p:
         etapa("Inicializando navegador")
         browser = p.chromium.launch(
+            
             headless=not SHOW_BROWSER,
             args=CHROMIUM_ARGS,
             slow_mo=0
         )
+        logging.info("[NAV] Chromium lanzado")
         if SHOW_BROWSER:
             context = browser.new_context(
                 accept_downloads=True,
                 viewport={"width": 1366, "height": 900}
             )
+            logging.info("[NAV] Contexto de navegador creado")
         else:
             vid_dir = temp_dir / "video"
             vid_dir.mkdir(parents=True, exist_ok=True)
@@ -2985,10 +3024,11 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
             # 1) Login → Radiografía
             sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
-
+            logging.info(f"[SAC] Abierto SAC / Radiografía: url={sac.url}")
             # 2) Buscar expediente
             etapa(f"Entrando a Radiografía y buscando expediente N° {nro_exp}")
             _fill_radiografia_y_buscar(sac, nro_exp)
+            logging.info(f"[RADIO] Buscado expediente N° {nro_exp}")
             if "SacInterior/Login.aspx" in sac.url:
                 messagebox.showerror("Error de sesión", "El SAC pidió re-login. Probá nuevamente.")
                 return
@@ -3002,7 +3042,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
             # dar tiempo a que cargue toda la vista (carátula + grillas)
             _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "500")))
-
+            logging.info("[RADIO] Vista de Radiografía cargada (carátula/operaciones/adjuntos visibles)")
             # listar operaciones rápido (con frames); darle un poco más de tiempo
             op_ids_rad = _listar_ops_ids_radiografia(
                 sac,
@@ -3049,6 +3089,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
             etapa("Cargando índice del Libro")
             ops = _expandir_y_cargar_todo_el_libro(libro)
+            logging.info(f"[LIBRO] Índice cargado · operaciones visibles={len(ops)}")
             if not ops:
                 logging.info("[SEC] La UI no muestra operaciones en el Índice. Se continúa SIN operaciones.")
                 ops = []
@@ -3078,6 +3119,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             except Exception:
                 pass
             pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path, ...]}
+            logging.info(f"[ADJ/GRID] Mapeo adjuntos por operación: { {k: len(v) for k, v in pdfs_grid.items()} }")
 
             # Helper: normaliza/estampa/dedup y agrega al merge
             def _push_pdf(pth: Path, hdr: str | None):
@@ -3120,6 +3162,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 op_id = o["id"]
                 op_tipo = o["tipo"]
                 titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
+                logging.info(f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}'")
 
                 # Mostrar y chequear visibilidad real del contenedor de la operación
                 _mostrar_operacion(libro, op_id, op_tipo)
@@ -3350,7 +3393,13 @@ class App:
 LOG = BASE_PATH / "debug.log"
 logging.basicConfig(filename=LOG, level=logging.INFO,
                     format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
-
+import builtins as _bi
+def _print_to_log(*args, **kwargs):
+    try:
+        logging.info(" ".join(str(a) for a in args))
+    except Exception:
+        pass
+_bi.print = _print_to_log
 def _set_win_appusermodelid(appid="SACDownloader.CBA"):
     """Para que Windows agrupe en la barra de tareas con el ícono del exe."""
     try:
