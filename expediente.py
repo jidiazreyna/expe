@@ -395,7 +395,7 @@ def _buscar_contenedor_operacion(scope, op_id: str):
         f"[aria-labelledby*='{op_id}']",
         f"[aria-controls*='{op_id}']",
         f".{op_id}",
-        f"[id*='{op_id}']",           # última chance (parcial)
+        f"[id*='{op_id}']",
     ]
     for sel in sels:
         try:
@@ -405,6 +405,7 @@ def _buscar_contenedor_operacion(scope, op_id: str):
         except Exception:
             continue
     return None
+
 
 
 def _descargar_ops_en_paralelo(session, template_url: str, op_ids: list[str], tmp_dir: Path, max_workers=6) -> dict[str, Path]:
@@ -881,26 +882,28 @@ def _libro_scope(libro):
             continue
     return libro
 
+
 def _listar_operaciones_rapido(libro):
     """
-    Devuelve [{id, tipo, titulo}] del índice del Libro, siendo tolerante con:
+    Devuelve [{id, tipo, titulo}] del índice del Libro siendo tolerante con:
     - onclick u href = javascript:onItemClick(...)
     - GUID presente en class o aria-controls
-    - índice dentro de frames
-    - dropdowns colapsados / render perezoso
+    - índice dentro de frames (recursivo)
+    - dropdowns colapsados y render perezoso
     """
     import re, time
 
     GUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
-    def _all_frames(page):
+    def _iter_frames(scope):
+        yield scope
         try:
-            return [page] + list(page.frames)
+            for fr in scope.frames:
+                yield from _iter_frames(fr)
         except Exception:
-            return [page]
+            pass
 
     def _expand(scope):
-        # abrir dropdowns/collapses si los hay
         sels = [
             ".dropdown-toggle[aria-expanded='false']",
             "a.nav-link.dropdown-toggle[aria-expanded='false']",
@@ -910,7 +913,7 @@ def _listar_operaciones_rapido(libro):
         for s in sels:
             try:
                 btns = scope.locator(s)
-                for i in range(min(25, btns.count())):
+                for i in range(min(btns.count(), 25)):
                     b = btns.nth(i)
                     try: b.click()
                     except Exception:
@@ -918,16 +921,14 @@ def _listar_operaciones_rapido(libro):
                         except Exception: pass
             except Exception:
                 continue
-        try:
-            scope.wait_for_timeout(200)
-        except Exception:
-            pass
+        try: scope.wait_for_timeout(150)
+        except Exception: pass
 
     def _scroll(scope):
         try:
-            # scroll del contenedor de índice si existe
             if scope.locator("#indice, .indice, .nav-container").first.count():
-                scope.eval_on_selector("#indice, .indice, .nav-container", "el=>el.scrollBy(0, el.clientHeight||600)")
+                scope.eval_on_selector("#indice, .indice, .nav-container",
+                                       "el=>el.scrollBy(0, el.clientHeight||600)")
             else:
                 scope.mouse.wheel(0, 900)
         except Exception:
@@ -935,10 +936,8 @@ def _listar_operaciones_rapido(libro):
 
     def _collect_from(scope):
         anchors = scope.locator(
-            # onclick inline
-            "a[onclick*='onItemClick('], "
-            # javascript:... en href
-            "a[href*='onItemClick('], "
+            # onclick inline u href javascript:onItemClick(...)
+            "a[onclick*='onItemClick('], a[href*='onItemClick('], "
             # data-attrs
             "a[data-codigo], [role='button'][data-codigo], li[data-codigo] a, nav a[data-codigo], "
             # tabs/pills que guardan relación por aria-controls / clases con GUID
@@ -954,25 +953,20 @@ def _listar_operaciones_rapido(libro):
             data_id   = a.get_attribute("data-codigo")
             data_tipo = a.get_attribute("data-tipo") or ""
             aria_ctl  = a.get_attribute("aria-controls") or ""
+            clases    = a.get_attribute("class") or ""
 
             # 1) onItemClick('ID','TIPO') en onclick o href
-            m = re.search(r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]', (oc + " " + href))
+            m = re.search(r'onItemClick\(\s*[\'"]([^\'"]+)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"]', oc + " " + href)
             if m:
                 op_id, tipo = m.group(1), m.group(2)
-            # 2) data-codigo / data-tipo
-            elif data_id:
+            elif data_id:                         # 2) data-codigo / data-tipo
                 op_id, tipo = data_id, data_tipo
-            # 3) aria-controls con GUID
-            elif GUID_RE.search(aria_ctl or ""):
+            elif GUID_RE.search(aria_ctl or ""):  # 3) aria-controls con GUID
                 op_id, tipo = GUID_RE.search(aria_ctl).group(0), data_tipo
-            # 4) GUID incrustado en class (caso visto en tu HTML)
+            elif GUID_RE.search(clases or ""):    # 4) GUID dentro de class
+                op_id, tipo = GUID_RE.search(clases).group(0), data_tipo
             else:
-                clases = (a.get_attribute("class") or "")
-                m2 = GUID_RE.search(clases)
-                if m2:
-                    op_id, tipo = m2.group(0), data_tipo
-                else:
-                    continue
+                continue
 
             if op_id in vistos:
                 continue
@@ -1005,9 +999,10 @@ def _listar_operaciones_rapido(libro):
         except Exception:
             pass
 
-    t0, items = time.time(), []
-    while (time.time() - t0) < 12.0:            # ← damos hasta 12 s a Intranet
-        for sc in _all_frames(S):
+    # Hasta 20 s para Intranet lenta
+    t0 = time.time()
+    while (time.time() - t0) < 20.0:
+        for sc in _iter_frames(S):
             try:
                 _expand(sc)
                 items = _collect_from(sc)
@@ -1016,12 +1011,11 @@ def _listar_operaciones_rapido(libro):
                 _scroll(sc)
             except Exception:
                 continue
-        try:
-            S.wait_for_timeout(250)
-        except Exception:
-            break
+        try: S.wait_for_timeout(250)
+        except Exception: break
 
-    return []  # si no encontramos nada
+    return []
+
 
 
 
@@ -2053,14 +2047,13 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
     S = _libro_scope(libro)
     _kill_overlays(S)
 
-    # 1) Intentar localizar el link por onclick/href/data/class
     sels = [
         f"a[onclick*=\"onItemClick('{op_id}'\"]",
         f"a[onclick*=\"onItemClick(\\\"{op_id}\\\"\"]",
         f"a[href*=\"onItemClick('{op_id}'\"]",
         f"a[href*=\"onItemClick(\\\"{op_id}\\\"\"]",
         f"a[data-codigo='{op_id}']",
-        f".nav-link.{op_id}",                 # GUID dentro de class (tu caso)
+        f".nav-link.{op_id}",
         f"a[aria-controls*='{op_id}']",
     ]
     link = None
@@ -2075,36 +2068,40 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
 
     clicked = False
     if link:
-        try:
-            link.scroll_into_view_if_needed()
-        except Exception:
-            pass
+        try: link.scroll_into_view_if_needed()
+        except Exception: pass
         try:
             link.click()
             clicked = True
         except Exception:
             try:
-                link.evaluate("el=>el.click()")
+                link.click(force=True)
                 clicked = True
             except Exception:
-                pass
+                try:
+                    link.evaluate("el=>el.click()")
+                    clicked = True
+                except Exception:
+                    pass
 
-    # 2) Si no hubo suerte, disparar la función JS en cualquier frame
     if not clicked:
+        # dispara onItemClick en cualquier frame que lo tenga
         for sc in [S] + list(S.frames):
             try:
-                sc.evaluate("""([id,t])=>{ try { if (typeof onItemClick==='function') onItemClick(id,t); } catch(e){} }""",
-                            [op_id, tipo])
-                clicked = True
-                break
+                has = sc.evaluate("()=>typeof onItemClick==='function'")
             except Exception:
-                continue
+                has = False
+            if has:
+                try:
+                    sc.evaluate("([id,t])=>onItemClick(id,t)", [op_id, tipo])
+                    clicked = True
+                    break
+                except Exception:
+                    continue
 
-    try:
-        # Dejar que pinte el contenido
-        S.wait_for_timeout(180)
-    except Exception:
-        pass
+    try: S.wait_for_timeout(200)
+    except Exception: pass
+
 
 
 def _extraer_url_de_link(link, proxy_prefix: str) -> str | None:
@@ -2756,6 +2753,8 @@ def _convertir_html_a_pdf(html_path: Path, context, p, tmp_dir: Path) -> Path | 
 def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path) -> Path | None:
     S = _libro_scope(libro)
     cont = _buscar_contenedor_operacion(S, op_id)
+    if not cont:
+        return None
     try:
         cont.wait_for(state="visible", timeout=6000)
     except Exception:
@@ -3125,7 +3124,9 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 # Mostrar y chequear visibilidad real del contenedor de la operación
                 _mostrar_operacion(libro, op_id, op_tipo)
                 S = _libro_scope(libro)
-                cont = S.locator(f"[id='{op_id}'], [data-codigo='{op_id}']").first
+                cont = _buscar_contenedor_operacion(S, op_id)
+                if not cont:
+                    return None
                 visible = False
                 try:
                     if cont.count() and cont.is_visible():
