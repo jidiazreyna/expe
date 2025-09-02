@@ -106,16 +106,16 @@ TELETRABAJO_URL = "https://teletrabajo.justiciacordoba.gob.ar/remote/login?lang=
 URL_BASE        = "https://www.tribunales.gov.ar"
 URL_LOGIN       = f"{URL_BASE}/SacInterior/Login.aspx"
 URL_RADIOGRAFIA = f"{URL_BASE}/SacInterior/_Expedientes/Radiografia.aspx"
-INTRANET_DESKTOP_URL     = "https://www.tribunales.gov.ar/PortalWeb/Privates/MyDesktop.aspx"
-INTRANET_PUBLIC_APPS_URL = "https://www.tribunales.gov.ar/PortalWeb/PublicApps.aspx"
-SAC_MENU_DEFAULT_URL     = "https://www.tribunales.gov.ar/SacInterior/Menu/Default.aspx"
+INTRANET_LOGIN_URL     = "https://aplicaciones.tribunales.gov.ar/portalwebnet/#/login"
+INTRANET_HOME_URL      = "https://aplicaciones.tribunales.gov.ar/portalwebnet/#/"
+SAC_MENU_DEFAULT_URL   = "https://www.tribunales.gov.ar/SacInterior/Menu/Default.aspx"
 
 def _is_teletrabajo(u: str) -> bool:
     return "teletrabajo.justiciacordoba.gob.ar" in (u or "")
 
 def _is_tribunales(u: str) -> bool:
     import re
-    return bool(re.search(r"https?://(www\.)?tribunales\.gov\.ar", u or "", re.I))
+    return bool(re.search(r"https?://([a-z0-9-]+\.)*tribunales\.gov\.ar", u or "", re.I))
 
 from io import BytesIO
 import subprocess, shutil as _shutil
@@ -1663,6 +1663,7 @@ def _login_intranet(page, intra_user, intra_pass):
     # Intentar encontrar usuario + password en algún scope (página o frame)
     user_sels = [
         "#txtUserName", "#txtUsuario",
+        "input[id='username']", "input[name='username']",
         "input[id$='UserName']", "input[name$='UserName']",
         "input[id*='UserLogin'][type='text']", "input[name*='UserLogin'][type='text']",
         "input[type='text'][name*='Usuario']",
@@ -1670,6 +1671,7 @@ def _login_intranet(page, intra_user, intra_pass):
     ]
     pass_sels = [
         "#txtUserPassword", "#txtContrasena",
+        "input[id='password']", "input[name='password']",
         "input[id$='Password']", "input[name$='Password']",
         "input[type='password']",
     ]
@@ -2089,6 +2091,8 @@ def _open_sac_desde_portal_intranet(page):
     link = page.get_by_role("link", name=matcher).first
     if not link.count():
         link = page.locator("a", has_text=matcher).first
+    if not link.count():
+        link = page.get_by_text(matcher).first
 
     if not link.count():
         for fr in page.frames:
@@ -2099,6 +2103,11 @@ def _open_sac_desde_portal_intranet(page):
                     page = fr
                     break
                 lk = fr.locator("a", has_text=matcher).first
+                if lk.count():
+                    link = lk
+                    page = fr
+                    break
+                lk = fr.get_by_text(matcher).first
                 if lk.count():
                     link = lk
                     page = fr
@@ -2234,21 +2243,21 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
 
     # 2) Intranet directa
     try:
-        page.goto(INTRANET_DESKTOP_URL, wait_until="domcontentloaded")
+        page.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
     except Exception:
-        # Último recurso: PublicApps
+        # Último recurso: ir directo al home del portal
         try:
-            page.goto(INTRANET_PUBLIC_APPS_URL, wait_until="domcontentloaded")
+            page.goto(INTRANET_HOME_URL, wait_until="domcontentloaded")
         except Exception:
             pass
 
     _login_intranet(page, intra_user, intra_pass)
 
-    # Garantizar estar en 'Aplicaciones' (PublicApps.aspx) aunque vengamos de MyDesktop
-    try:
-        _ensure_public_apps(page)
-    except Exception:
-        pass
+    if "aplicaciones.tribunales.gov.ar" not in (page.url or ""):
+        try:
+            _ensure_public_apps(page)
+        except Exception:
+            pass
 
     # Abrir SAC desde el menú de Aplicaciones
     try:
