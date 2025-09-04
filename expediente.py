@@ -1256,16 +1256,22 @@ except Exception:
 
 def _find_tesseract_cmd() -> str | None:
     import shutil
-    cand = [
-        os.getenv("TESSERACT_CMD", "").strip() or None,
+    cand = []
+    if os.getenv("TESSERACT_CMD"):
+        cand.append(os.getenv("TESSERACT_CMD"))
+    cand += [
         str(BASE_PATH / "tesseract" / "tesseract.exe"),
+        str(BASE_PATH / "bin" / "tesseract.exe"),
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         shutil.which("tesseract"),
     ]
     for c in cand:
         if c and Path(c).exists():
+            logging.info(f"[OCR] tesseract.exe: {c}")
             return c
+    logging.info("[OCR] tesseract.exe no encontrado.")
     return None
+
 
 def _pdf_tiene_texto(path: Path, paginas=3) -> bool:
     try:
@@ -1352,39 +1358,255 @@ def _ocr_con_pdfium_y_tesseract(src: Path, dst: Path, langs: str, dpi: int) -> b
         except Exception:
             shutil.rmtree(tmp, ignore_errors=True)
 
-def _maybe_ocr(pdf_in: Path) -> Path:
-    """
-    Devuelve un PDF con capa de texto, usando:
-      1) ocrmypdf (si está),
-      2) pypdfium2 + pytesseract (+ tesseract portable).
-    Respeta OCR_MODE: off | auto | force.
-    """
+def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     mode = os.getenv("OCR_MODE", "auto").lower()
-    if mode not in {"off","auto","force"}:
-        mode = "auto"
+    if mode not in {"off","auto","force"}: mode = "auto"
     langs = os.getenv("OCR_LANGS", "spa+eng")
-    dpi = int(os.getenv("OCR_DPI", "300"))
+    dpi   = int(os.getenv("OCR_DPI", "300"))
 
-    if mode == "off":
-        return pdf_in
+    # ¿Hace falta?
+    needs = force or (mode == "force") or (mode == "auto" and not _pdf_tiene_texto(pdf_in))
+    logging.info(f"[OCR] file={pdf_in.name} mode={mode} needs={needs}")
 
-    needs = (mode == "force") or (not _pdf_tiene_texto(pdf_in))
     if not needs:
         return pdf_in
 
     dst = pdf_in.with_suffix(".ocr.pdf")
 
-    # 1) ocrmypdf
-    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=(mode=="force")):
-        return dst
+    # 1) Intento con ocrmypdf (si está)
+    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=True):
+        logging.info("[OCR] Hecho con ocrmypdf")
+        return dst if dst.exists() else pdf_in
 
-    # 2) pdfium + tesseract
+    # 2) Fallback pdfium + tesseract portable
     if _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
-        return dst
+        logging.info("[OCR] Hecho con Tesseract portable")
+        return dst if dst.exists() else pdf_in
 
-    # Si todo falló, devolvemos el original sin romper el flujo
+    logging.info("[OCR] No se pudo realizar OCR; devuelvo original")
     return pdf_in
 
+def _parse_fecha_ar(s: str):
+    import re, datetime as _dt
+    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?', s or "")
+    if not m: return None
+    d, mth, y = map(int, m.group(1,2,3))
+    if m.group(4):
+        return _dt.datetime(y, mth, d, int(m.group(4)), int(m.group(5)))
+    return _dt.datetime(y, mth, d, 0, 0)
+
+def _mapear_fechas_operaciones(sac) -> dict[str, datetime.date]:
+    """Lee la grilla de OPERACIONES y devuelve {op_id: fecha_mov (date)}."""
+    import re, datetime as _dt
+    out = {}
+    try:
+        filas = sac.locator("#cphDetalle_gvOperaciones tr")
+        total = filas.count()
+    except Exception:
+        total = 0
+    for i in range(1, total):
+        row = filas.nth(i)
+        # op_id
+        try:
+            link = row.locator("a[href*='VerDecretoHtml'], a[onclick*='VerDecretoHtml']").first
+            oc = (link.get_attribute("href") or "") + " " + (link.get_attribute("onclick") or "")
+            m = re.search(r"VerDecretoHtml\('([^']+)'", oc)
+            if not m: continue
+            op_id = m.group(1)
+        except Exception:
+            continue
+        # fecha (preferimos la última fecha de la fila → suele ser 'Fecha Movimiento')
+        try:
+            txt = row.inner_text() or ""
+        except Exception:
+            txt = ""
+        dt = _parse_fecha_ar(txt)
+        if not dt:
+            try:
+                last_td = row.locator("td").last
+                t2 = last_td.inner_text() or ""
+                dt = _parse_fecha_ar(t2)
+            except Exception:
+                dt = None
+        if dt:
+            out[op_id] = dt.date()
+    return out
+
+def _descargar_informes_tecnicos_mpf(sac, carpeta: Path):
+    """
+    Devuelve lista de tuplas (fecha_date, pdf_path, header_str).
+    Busca la sección 'INFORMES TÉCNICOS MPF' y captura los PDF del botón 'Ver'.
+    """
+    import re, datetime as _dt
+    docs = []
+
+    # Asegurar que la sección esté abierta
+    try:
+        hdr = sac.get_by_text(re.compile(r"INFORMES\s+T[ÉE]CNICOS\s+MPF", re.I)).first
+        if hdr.count():
+            try: hdr.scroll_into_view_if_needed()
+            except Exception: pass
+            try: hdr.click()
+            except Exception:
+                try: hdr.evaluate("el=>el.click()")
+                except Exception: pass
+            sac.wait_for_timeout(250)
+    except Exception:
+        pass
+
+    # Encontrar tabla por cabeceras típicas
+    grid = sac.locator("table:has(th:has-text('N°'), th:has-text('Fecha'), th:has-text('Ver'))").first
+    if not grid.count():
+        # Fallback por id común
+        grid = sac.locator("#cphDetalle_gvInformesTecnicos").first
+        if not grid.count():
+            return docs
+
+    rows = grid.locator("tr")
+    n = rows.count()
+    if n <= 1:
+        return docs
+
+    # indices de columnas (best effort)
+    hdrs = rows.nth(0).locator("th,td")
+    H = []
+    for i in range(hdrs.count()):
+        try: H.append((hdrs.nth(i).inner_text() or "").strip().lower())
+        except Exception: H.append("")
+    def idx(nombre):
+        for i, h in enumerate(H):
+            if nombre in h: return i
+        return None
+    i_fecha = idx("fecha movimiento") or idx("fecha pedido")
+    i_tipo  = idx("tipo informe")
+    i_dep   = idx("dependencia")  # cualquiera
+    i_tec   = idx("técnico") or idx("tecnico")
+
+    for i in range(1, n):
+        row = rows.nth(i)
+        # Fecha
+        ft = ""
+        if i_fecha is not None:
+            try: ft = row.locator("td").nth(i_fecha).inner_text() or ""
+            except Exception: ft = ""
+        dt = _parse_fecha_ar(ft) or _dt.datetime.today()
+        dia = dt.date()
+        # Texto para el header
+        def cell(i_):
+            try: return (row.locator("td").nth(i_).inner_text() or "").strip()
+            except Exception: return ""
+        tipo = cell(i_tipo) if i_tipo is not None else ""
+        dep  = cell(i_dep)  if i_dep  is not None else ""
+        tec  = cell(i_tec)  if i_tec  is not None else ""
+        header = f"INFORME TÉCNICO MPF · {tipo or '-'} · {dep or ''} · {tec or ''}".strip(" ·")
+
+        # Link PDF (último <a> de la fila)
+        link = row.locator("a[href*='.pdf'], a:has(.fa-file), a:has(img)").last
+        if not link.count():
+            link = row.locator("a").last
+        if not link.count():
+            continue
+
+        try:
+            with sac.expect_download(timeout=15000) as dl:
+                try: link.click()
+                except Exception: link.evaluate("el=>el.click()")
+            d = dl.value
+            destino = carpeta / d.suggested_filename
+            d.save_as(destino)
+            pdf = destino if _is_real_pdf(destino) else _ensure_pdf_fast(destino)
+            if pdf.exists() and pdf.suffix.lower()==".pdf":
+                docs.append((dia, pdf, header))
+        except Exception:
+            continue
+
+    return docs
+
+def _descargar_informes_rnr(sac, carpeta: Path):
+    """
+    Devuelve lista de (fecha_date, pdf_path, header_str) para RN Reincidencias.
+    Fecha: intenta 'Fecha Movimiento' si existe; si no, cae al día actual.
+    (Evitamos usar 'Fecha Nacimiento').
+    """
+    import re, datetime as _dt
+    docs = []
+
+    # Abrir sección
+    try:
+        hdr = sac.get_by_text(re.compile(r"INFORMES\s+REGISTRO\s+NACIONAL\s+DE\s+REINCIDENCIAS", re.I)).first
+        if hdr.count():
+            try: hdr.scroll_into_view_if_needed()
+            except Exception: pass
+            try: hdr.click()
+            except Exception:
+                try: hdr.evaluate("el=>el.click()")
+                except Exception: pass
+            sac.wait_for_timeout(250)
+    except Exception:
+        pass
+
+    grid = sac.locator("table:has(th:has-text('Nombre'), th:has-text('Documento'))").first
+    if not grid.count():
+        return docs
+
+    rows = grid.locator("tr")
+    n = rows.count()
+    if n <= 1:
+        return docs
+
+    # indices de columnas
+    hdrs = rows.nth(0).locator("th,td")
+    H, pos = [], {}
+    for i in range(hdrs.count()):
+        try:
+            t = (hdrs.nth(i).inner_text() or "").strip().lower()
+        except Exception:
+            t = ""
+        H.append(t); pos[t] = i
+    i_fecha_mov = None
+    for k in list(pos):
+        if "fecha movimiento" in k or "fecha pedido" in k:
+            i_fecha_mov = pos[k]; break
+    i_nom = pos.get("nombre", None)
+
+    for i in range(1, n):
+        row = rows.nth(i)
+        # Fecha del movimiento (si la tabla la trae); si no, hoy
+        ft = ""
+        if i_fecha_mov is not None:
+            try: ft = row.locator("td").nth(i_fecha_mov).inner_text() or ""
+            except Exception: ft = ""
+        dt = _parse_fecha_ar(ft) or _dt.datetime.today()
+        dia = dt.date()
+
+        # Header informativo
+        nombre = ""
+        if i_nom is not None:
+            try: nombre = (row.locator("td").nth(i_nom).inner_text() or "").strip()
+            except Exception: pass
+        header = f"RN REINCIDENCIAS · {nombre or ''}".strip()
+
+        # Link PDF (último <a>)
+        link = row.locator("a[href*='.pdf'], a:has(.fa-file), a:has(img)").last
+        if not link.count():
+            link = row.locator("a").last
+        if not link.count():
+            continue
+
+        try:
+            with sac.expect_download(timeout=15000) as dl:
+                try: link.click()
+                except Exception: link.evaluate("el=>el.click()")
+            d = dl.value
+            destino = carpeta / d.suggested_filename
+            d.save_as(destino)
+            pdf = destino if _is_real_pdf(destino) else _ensure_pdf_fast(destino)
+            if pdf.exists() and pdf.suffix.lower()==".pdf":
+                docs.append((dia, pdf, header))
+        except Exception:
+            continue
+
+    return docs
 
 
 # ─────────────────────────── Helpers UI/DOM ────────────────────────────
@@ -2630,7 +2852,8 @@ def _ensure_pdf_fast(path: Path) -> Path:
         return _maybe_ocr(path)
     if ext in {".jpg",".jpeg",".png",".tif",".tiff",".bmp"}:
         pdf = _imagen_a_pdf_fast(path)
-        return _maybe_ocr(pdf)
+        # Por default fuerzo OCR en imágenes (podés desactivar con OCR_FORCE_IMAGES=0)
+        return _maybe_ocr(pdf, force=_env_true("OCR_FORCE_IMAGES","1"))
 
     soffice = _shutil.which("soffice") or _shutil.which("soffice.exe") or r"C:\Program Files\LibreOffice\program\soffice.exe"
     if soffice and Path(str(soffice)).exists():
@@ -2643,7 +2866,7 @@ def _ensure_pdf_fast(path: Path) -> Path:
             pdf = path.with_suffix(".pdf")
             if pdf.exists():
                 logging.info(f"[CNV:OK ]  {pdf.name}")
-                return _maybe_ocr(pdf) 
+                return _maybe_ocr(pdf)
         except Exception as e:
             logging.info(f"[CNV:ERR] {path.name} · {e}")
     return path
@@ -3565,6 +3788,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el índice.")
 
             # 4) Carátula (NO usar imprimir oficial)
+            prim_dia = min(fechas_ops.values()) if fechas_ops else _dt.date.today()
             etapa("Renderizando carátula del expediente")
             bloques: list[tuple[Path, str | None]] = []
             ya_agregados: set[tuple[str, int]] = set()
@@ -3574,7 +3798,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     try: caratula_pdf = _pdf_sin_blancos(caratula_pdf)
                     except Exception: pass
                     _mf(f"CARATULA · {caratula_pdf.name}")
-                    bloques.append((caratula_pdf, None))
+                    _push_main_for_day(prim_dia, caratula_pdf, None)
                     logging.info("[CARATULA] agregada al inicio")
                 else:
                     logging.info("[CARATULA] no se pudo capturar (se continúa)")
@@ -3590,28 +3814,33 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path, ...]}
             logging.info(f"[ADJ/GRID] Mapeo adjuntos por operación: { {k: len(v) for k, v in pdfs_grid.items()} }")
 
+            from collections import defaultdict
+            import datetime as _dt
+
+            fechas_ops = _mapear_fechas_operaciones(sac)
+            def _dia_op(op_id: str) -> datetime.date:
+                if op_id in fechas_ops:
+                    return fechas_ops[op_id]
+                # fallback: primer día conocido o hoy
+                return (min(fechas_ops.values()) if fechas_ops else _dt.date.today())
+
+            buckets = defaultdict(lambda: {"main": [], "mpf": [], "rnr": []})
+
             # Helper: normaliza/estampa/dedup y agrega al merge
-            def _push_pdf(pth: Path, hdr: str | None):
+            def _push_main_for_day(day_key: datetime.date, pth: Path, hdr: str | None):
                 if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                     return
-                try:
-                    key = (pth.name, pth.stat().st_size)
-                except Exception:
-                    key = (pth.name, 0)
-                if key in ya_agregados:
-                    return
-                # ← OCR aquí
-                pth = _maybe_ocr(pth)
-
+                pth = _maybe_ocr(pth)   # ← aplica OCR aquí
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
                     pass
-                bloques.append((pth, hdr))
+                buckets[day_key]["main"].append((pth, hdr))
+
 
 
             # Helper: adjuntos de operación (Libro + Grid)
-            def _agregar_adjuntos_de_op(op_id: str, titulo: str):
+            def _agregar_adjuntos_de_op(op_id: str, titulo: str, dia: datetime.date):
                 pdfs_op: list[Path] = []
                 try:
                     pdfs_op.extend(_descargar_adjuntos_de_operacion(libro, op_id, temp_dir))
@@ -3624,19 +3853,18 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · {titulo} · {pth.name}")
                     hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    _push_pdf(pth, hdr)
-                    logging.info(f"[MERGE] ADJ · {pth.name} (op {op_id})")
+                    _push_main_for_day(dia, pth, hdr)
+
 
             # 6) Operaciones (como antes): render por páginas, PERO sólo si están visibles
             op_pdfs_capturados = 0
             etapa("Procesando operaciones visibles del Libro")
             for o in ops:
-                op_id = o["id"]
-                op_tipo = o["tipo"]
+                op_id  = o["id"]
+                op_tipo= o["tipo"]
                 titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
-                logging.info(f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}'")
+                dia_op = _dia_op(op_id)
 
-                # Mostrar y chequear visibilidad real del contenedor de la operación
                 _mostrar_operacion(libro, op_id, op_tipo)
                 S = _libro_scope(libro)
                 cont = _buscar_contenedor_operacion(S, op_id)
@@ -3661,17 +3889,16 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 except Exception as e:
                     logging.info(f"[OP:ERR] {op_id}: {e}")
                     pdf_op = None
-
                 if pdf_op and pdf_op.exists():
                     _mf(f"OPERACION · {titulo} · {pdf_op.name}")
-                    _push_pdf(pdf_op, None)  # sin header en operaciones
+                    _push_main_for_day(dia_op, pdf_op, None)
                     op_pdfs_capturados += 1
                     logging.info(f"[OP] {op_id}: agregado (renderer de páginas)")
                 else:
                     logging.info(f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos).")
 
                 # Adjuntos de esta operación
-                _agregar_adjuntos_de_op(op_id, titulo)
+                _agregar_adjuntos_de_op(op_id, titulo, dia_op)
 
             # 7) Fallback del Libro (mantener _imprimir... / _guardar... → _convertir...) si no hubo ninguna operación
             if op_pdfs_capturados == 0:
@@ -3685,24 +3912,57 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     try: libro_pdf = _pdf_sin_blancos(libro_pdf)
                     except Exception: pass
                     _mf(f"LIBRO · {libro_pdf.name}")
-                    _push_pdf(libro_pdf, None)
+                    _push_main_for_day(libro_pdf, None)
                 else:
                     logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
 
             # 8) Adjuntos sin operación mapeada → al final
             adj_sin = pdfs_grid.get("__SIN_OP__", [])
             if adj_sin:
-                logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
+                ult_dia = max(fechas_ops.values()) if fechas_ops else prim_dia
                 for pdf in adj_sin:
-                    pth = pdf if pdf.suffix.lower() == ".pdf" else (_ensure_pdf_fast(pdf) if '_ensure_pdf_fast' in globals() else _ensure_pdf(pdf))
-                    if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                    pth = pdf if pdf.suffix.lower()==".pdf" else (_ensure_pdf_fast(pdf) if '_ensure_pdf_fast' in globals() else _ensure_pdf(pdf))
+                    if not pth or not pth.exists() or pth.suffix.lower()!=".pdf":
                         continue
                     _mf(f"ADJUNTO · (sin operación) · {pth.name}")
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
-                    _push_pdf(pth, hdr)
+                    _push_main_for_day(ult_dia, pth, hdr)
 
             if not bloques:
                 raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
+
+            # INFORMES TÉCNICOS MPF
+            try:
+                inf_mpf = _descargar_informes_tecnicos_mpf(sac, temp_dir)
+                for dia, pdf, hdr in inf_mpf:
+                    pdf = _maybe_ocr(pdf)
+                    try: pdf = _pdf_sin_blancos(pdf)
+                    except Exception: pass
+                    buckets[dia]["mpf"].append((pdf, hdr if STAMP else None))
+                logging.info(f"[MPF] Informes: {len(inf_mpf)}")
+            except Exception as e:
+                logging.info(f"[MPF:ERR] {e}")
+
+            # INFORMES RN REINCIDENCIAS
+            try:
+                inf_rnr = _descargar_informes_rnr(sac, temp_dir)
+                for dia, pdf, hdr in inf_rnr:
+                    pdf = _maybe_ocr(pdf)
+                    try: pdf = _pdf_sin_blancos(pdf)
+                    except Exception: pass
+                    buckets[dia]["rnr"].append((pdf, hdr if STAMP else None))
+                logging.info(f"[RNR] Informes: {len(inf_rnr)}")
+            except Exception as e:
+                logging.info(f"[RNR:ERR] {e}")
+
+            if not buckets:
+                raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
+
+            bloques = []
+            for dia in sorted(buckets.keys()):
+                bloques.extend(buckets[dia]["main"])  # operaciones + adjuntos
+                bloques.extend(buckets[dia]["mpf"])   # luego MPF del día
+                bloques.extend(buckets[dia]["rnr"])   # y luego RN del día
 
             # 9) Fusión final
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
