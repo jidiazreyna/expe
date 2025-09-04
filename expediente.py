@@ -2121,13 +2121,17 @@ def _kill_overlays(page):
 
 def _ensure_public_apps(page):
     """
-    Nos posiciona en PublicApps.aspx (listado 'Aplicaciones') con el mismo /proxy/.
-    Evita errores “Access Denied” por deep-link sin contexto.
+    Posiciona en PublicApps.aspx pero nunca sale del proxy.
+    Si todavía no hay /proxy/<token>/ vuelve a la grilla y abre por tile.
     """
     proxy_prefix = _get_proxy_prefix(page)
+    if not proxy_prefix:
+        _goto_portal_grid(page)
+        return _open_portal_aplicaciones_pj(page)  # activa el proxy y vuelve dentro del portal
     page.goto(proxy_prefix + "https://www.tribunales.gov.ar/PortalWeb/PublicApps.aspx",
               wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
+    return page
 
 # ───────────────────────── CARGA DEL LIBRO ─────────────────────────────
 def _expandir_y_cargar_todo_el_libro(libro):
@@ -2559,11 +2563,10 @@ def _ir_a_radiografia(sac):
 # ─────────────────────── Flujo principal de login ──────────────────────
 def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
-    # timeouts más holgados para el primer arranque del día
     page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
     page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
 
-    # 1) Login Teletrabajo (igual que ahora)
+    # 1) Login Teletrabajo
     page.goto(TELETRABAJO_URL, wait_until="domcontentloaded")
     _fill_first(page, ['#username','input[name="username"]','input[name="UserName"]','input[type="text"]'], tele_user)
     _fill_first(page, ['#password','input[name="password"]','input[type="password"]'], tele_pass)
@@ -2572,20 +2575,31 @@ def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_p
     page.wait_for_load_state("networkidle")
     _handle_loginconfirm(page)
 
-    # 2) 👇 NUEVO: ir directo al portal de aplicaciones del PJ vía el MISMO proxy
-    _ensure_public_apps(page)          # <<--- en vez de _goto_portal_grid + _open_portal_aplicaciones_pj
+    # 2) ¡SIEMPRE! traer la grilla del portal y clickear el tile (esto activa el proxy)
+    _goto_portal_grid(page)
+    try:
+        portal = _open_portal_aplicaciones_pj(page)   # ← Tile "Portal de Aplicaciones PJ"
+    except Exception:
+        # Fallback: solo si YA hay prefijo, ir directo a PublicApps con ese mismo prefijo
+        proxy_prefix = _get_proxy_prefix(page)
+        if not proxy_prefix:
+            raise
+        page.goto(proxy_prefix + "https://www.tribunales.gov.ar/PortalWeb/PublicApps.aspx",
+                  wait_until="domcontentloaded")
+        portal = page
 
-    # 3) Login de Intranet (si hace falta) en esa misma página
-    _login_intranet(page, intra_user, intra_pass)
+    # 3) Login Intranet (si hace falta)
+    _login_intranet(portal, intra_user, intra_pass)
 
-    # 4) Abrir SAC desde el portal (dispatcher maneja teletrabajo/intranet)
-    sac = _open_sac_desde_portal(page)
+    # 4) Abrir SAC desde el portal
+    sac = _open_sac_desde_portal(portal)
 
-    # 5) Reintento suave si el proxy devuelve error
+    # 5) Reintento suave si el proxy avisó error
     if _is_proxy_error(sac):
-        _ensure_public_apps(page)
-        _login_intranet(page, intra_user, intra_pass)
-        sac = _open_sac_desde_portal(page)
+        _goto_portal_grid(portal)
+        portal = _open_portal_aplicaciones_pj(portal)
+        _login_intranet(portal, intra_user, intra_pass)
+        sac = _open_sac_desde_portal(portal)
 
     # 6) Radiografía
     return _ir_a_radiografia(sac)
@@ -2594,7 +2608,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
     page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
     page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
-
+    ALLOW_DIRECT_INTRANET = _env_true("ALLOW_DIRECT_INTRANET","0")
     prefer_tele = bool(tele_user and tele_pass and _env_true("PREFER_TELE","1"))
 
     def _try_open(fn, label):
@@ -2613,10 +2627,12 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     # 1) Si hay credenciales de Tele, ir por Tele primero
     if prefer_tele:
         try:
-            return _try_open(lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
-                             "TELETRABAJO")
-        except Exception:
+            return _try_open(lambda: abrir_sac_via_teletrabajo(...), "TELETRABAJO")
+        except Exception as e:
             logging.info("[OPEN] Teletrabajo falló; pruebo Intranet directa")
+            if not ALLOW_DIRECT_INTRANET:
+                raise e
+    # si ALLOW_DIRECT_INTRANET=1, recién ahí proba el bloque de INTRANET
 
     # 2) Intranet directa
     try:
