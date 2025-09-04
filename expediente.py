@@ -2559,10 +2559,11 @@ def _ir_a_radiografia(sac):
 # ─────────────────────── Flujo principal de login ──────────────────────
 def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
-    page.set_default_timeout(30000)
-    page.set_default_navigation_timeout(45000)
+    # timeouts más holgados para el primer arranque del día
+    page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
+    page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
 
-    # 1) Login Teletrabajo
+    # 1) Login Teletrabajo (igual que ahora)
     page.goto(TELETRABAJO_URL, wait_until="domcontentloaded")
     _fill_first(page, ['#username','input[name="username"]','input[name="UserName"]','input[type="text"]'], tele_user)
     _fill_first(page, ['#password','input[name="password"]','input[type="password"]'], tele_pass)
@@ -2570,58 +2571,76 @@ def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_p
         page.keyboard.press("Enter")
     page.wait_for_load_state("networkidle")
     _handle_loginconfirm(page)
-    _goto_portal_grid(page)
 
-    # 2) Portal de Aplicaciones PJ
-    page = _open_portal_aplicaciones_pj(page)
+    # 2) 👇 NUEVO: ir directo al portal de aplicaciones del PJ vía el MISMO proxy
+    _ensure_public_apps(page)          # <<--- en vez de _goto_portal_grid + _open_portal_aplicaciones_pj
 
-    # 3) Login en Intranet en la página actual
+    # 3) Login de Intranet (si hace falta) en esa misma página
     _login_intranet(page, intra_user, intra_pass)
 
-    # 4) Ir a Aplicaciones y abrir SAC
-    sac = _open_sac_desde_portal_teletrabajo(page)
+    # 4) Abrir SAC desde el portal (dispatcher maneja teletrabajo/intranet)
+    sac = _open_sac_desde_portal(page)
 
-    # 5) Si el proxy niega el acceso, reintentamos 1 vez desde Aplicaciones
+    # 5) Reintento suave si el proxy devuelve error
     if _is_proxy_error(sac):
-        _goto_portal_grid(page)
-        page = _open_portal_aplicaciones_pj(page)
+        _ensure_public_apps(page)
         _login_intranet(page, intra_user, intra_pass)
-        sac = _open_sac_desde_portal_teletrabajo(page)
+        sac = _open_sac_desde_portal(page)
 
     # 6) Radiografía
-    sac = _ir_a_radiografia(sac)
-    return sac
+    return _ir_a_radiografia(sac)
 
 def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
-    page.set_default_timeout(12000)
-    page.set_default_navigation_timeout(15000)
+    page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
+    page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
 
-    # 1) Preferir Intranet directa
+    prefer_tele = bool(tele_user and tele_pass and _env_true("PREFER_TELE","1"))
+
+    def _try_open(fn, label):
+        last = None
+        for i in range(2):  # 2 intentos ligeros
+            try:
+                logging.info(f"[OPEN] {label} intento {i+1}")
+                return fn()
+            except Exception as e:
+                last = e
+                logging.info(f"[OPEN:{label}:ERR] intento {i+1} · {e}")
+                try: page.wait_for_timeout(800*(i+1))
+                except Exception: pass
+        raise last if last else RuntimeError(f"{label} falló")
+
+    # 1) Si hay credenciales de Tele, ir por Tele primero
+    if prefer_tele:
+        try:
+            return _try_open(lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
+                             "TELETRABAJO")
+        except Exception:
+            logging.info("[OPEN] Teletrabajo falló; pruebo Intranet directa")
+
+    # 2) Intranet directa
     try:
-        page.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
-        logging.info("[OPEN] Cargado login de Intranet")
-        _login_intranet(page, intra_user, intra_pass)
-        logging.info(f"[LOGIN] Intento de login en Intranet · url_actual={page.url}")
-        if "aplicaciones.tribunales.gov.ar" not in (page.url or ""):
-            _ensure_public_apps(page)
-            logging.info("[NAV] En 'Aplicaciones' (PublicApps.aspx)")
-        sac = _open_sac_desde_portal(page)
-        logging.info(f"[NAV] Ingresando al SAC desde portal · destino={getattr(sac,'url', None)}")
-
-        return _ir_a_radiografia(sac)
+        def _open_intranet():
+            pg = context.new_page()
+            pg.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
+            pg.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
+            pg.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
+            _login_intranet(pg, intra_user, intra_pass)
+            if "aplicaciones.tribunales.gov.ar" not in (pg.url or ""):
+                _ensure_public_apps(pg)
+            sac = _open_sac_desde_portal(pg)
+            return _ir_a_radiografia(sac)
+        return _try_open(_open_intranet, "INTRANET")
     except Exception:
         pass
 
-    # 2) Fallback Teletrabajo solo si hay credenciales
-    if tele_user and tele_pass:
-        try:
-            logging.info("[FALLBACK] Intento abrir por Teletrabajo (VPN)")
-            return abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass)
-        except Exception:
-            pass
+    # 3) Último intento por Tele si no lo probamos primero
+    if not prefer_tele and tele_user and tele_pass:
+        return _try_open(lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
+                         "TELETRABAJO")
 
     raise RuntimeError("No pude abrir el SAC ni por Intranet ni por Teletrabajo.")
+
 
 def _cerrar_indice_libro(libro):
     """
