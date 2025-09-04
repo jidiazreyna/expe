@@ -405,24 +405,25 @@ def _descubrir_template_imprimir(sac, op_id: str) -> str | None:
     # reemplazá el id por marcador
     return re.sub(r"(idOperacion|idOp|id)=[0-9A-Za-z-]+", r"\1={ID}", url)  # GUID o número
 
-def _buscar_contenedor_operacion(scope, op_id: str):
+def _buscar_contenedor_operacion(root, op_id: str):
     sels = [
         f"[id='{op_id}']",
         f"[data-codigo='{op_id}']",
-        f"[data-id='{op_id}']",
         f"[aria-labelledby*='{op_id}']",
         f"[aria-controls*='{op_id}']",
         f".{op_id}",
         f"[id*='{op_id}']",
     ]
-    for sel in sels:
-        try:
-            loc = scope.locator(sel).first
-            if loc.count() and loc.is_visible():
-                return loc
-        except Exception:
-            continue
+    for sc in _all_scopes(root):
+        for sel in sels:
+            try:
+                loc = sc.locator(sel).first
+                if loc.count():
+                    return loc  # no exijo is_visible: a veces está fuera de viewport
+            except Exception:
+                continue
     return None
+
 
 
 
@@ -929,6 +930,16 @@ def _libro_scope(libro):
             continue
 
     return libro
+
+def _all_scopes(root):
+    """Itera la página y todos sus frames (profundidad)."""
+    try:
+        yield root
+        for fr in getattr(root, "frames", []):
+            yield from _all_scopes(fr)
+    except Exception:
+        return
+
 
 def _listar_operaciones_rapido(libro):
     import re, time
@@ -1573,10 +1584,12 @@ def _recorrer_indice_libro(libro):
 # ───────────────── Capturar UNA operación a PDF ─────────────────
 from PIL import Image
 def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
+    # usar el frame/página que realmente contiene el Libro
     S = _libro_scope(libro)
-    _cerrar_indice_libro(libro)
-
     cont = _buscar_contenedor_operacion(S, op_id)
+    if not cont:
+        return None
+
     try:
         cont.wait_for(state="visible", timeout=5000)
     except Exception:
@@ -1584,22 +1597,27 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
 
     # Normalización básica para que no haya sticky/overflow raros
     try:
-        S.evaluate("""(id) => {
-            const el = document.querySelector(`[id='${id}'], [data-codigo='${id}']`);
-            if (!el) return;
-            el.style.overflow = 'visible'; el.style.maxHeight = 'unset'; el.style.height = 'auto';
-            el.style.transform = 'none'; el.style.zoom = 'unset';
-            el.querySelectorAll('*').forEach(n => {
-                const cs = getComputedStyle(n);
-                if (/(sticky|fixed)/.test(cs.position)) n.style.position = 'static';
-                if (/(auto|scroll|hidden)/.test(cs.overflowY)) n.style.overflow = 'visible';
-                if (n.style.maxHeight && n.style.maxHeight !== 'none') n.style.maxHeight = 'unset';
-            });
-        }""", op_id)
+        S.evaluate(
+            """
+            (id) => {
+                const el = document.querySelector(`[id='${id}'], [data-codigo='${id}']`);
+                if (!el) return;
+                el.style.overflow = 'visible'; el.style.maxHeight = 'unset'; el.style.height = 'auto';
+                el.style.transform = 'none'; el.style.zoom = 'unset';
+                el.querySelectorAll('*').forEach(n => {
+                    const cs = getComputedStyle(n);
+                    if (/(sticky|fixed)/.test(cs.position)) n.style.position = 'static';
+                    if (/(auto|scroll|hidden)/.test(cs.overflowY)) n.style.overflow = 'visible';
+                    if (n.style.maxHeight && n.style.maxHeight !== 'none') n.style.maxHeight = 'unset';
+                });
+            }
+            """,
+            op_id
+        )
     except Exception:
         pass
 
-    # → Captura directa del elemento (rápida) con timeout largo
+    # → Captura directa del elemento (rápida)
     elem_png = tmp_dir / f"op_{op_id}.png"
     try:
         cont.scroll_into_view_if_needed()
@@ -1614,12 +1632,12 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
         )
         return _imagen_a_pdf(elem_png)
     except Exception:
-        # Fallback: clip al bounding box (sin full_page)
+        # Fallback: clip al bounding box
         bb = cont.bounding_box()
         if not bb:
             return None
         clip_png = tmp_dir / f"op_{op_id}_clip.png"
-        libro.screenshot(
+        S.screenshot(
             path=str(clip_png),
             clip={"x": bb["x"], "y": bb["y"], "width": bb["width"], "height": bb["height"]},
             animations="disabled",
@@ -1627,6 +1645,7 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
             timeout=120_000
         )
         return _imagen_a_pdf(clip_png)
+
 
 def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[Path]:
     """
@@ -2092,10 +2111,13 @@ def _expandir_y_cargar_todo_el_libro(libro):
         orden = []
         for it in items:
             _mostrar_operacion(libro, it["id"], it.get("tipo",""))
-            try:
-                S.wait_for_selector(f"[id='{it['id']}'], [data-codigo='{it['id']}']", timeout=1500)
-            except Exception:
-                pass
+            cont = _buscar_contenedor_operacion(libro, it["id"])
+            if cont:
+                try:
+                    cont.wait_for(state="visible", timeout=2000)
+                except Exception:
+                    pass
+
             orden.append(it)
         return orden
     finally:
@@ -2103,82 +2125,89 @@ def _expandir_y_cargar_todo_el_libro(libro):
         except Exception: pass
 
 def _mostrar_operacion(libro, op_id: str, tipo: str):
-    S = _libro_scope(libro)
-    _kill_overlays(S)
-
-    sels = [
-        f"a[onclick*=\"onItemClick('{op_id}'\"]",
-        f"a[onclick*=\"onItemClick(\\\"{op_id}\\\"\"]",
-        f"a[href*=\"onItemClick('{op_id}'\"]",
-        f"a[href*=\"onItemClick(\\\"{op_id}\\\"\"]",
-        f"a[data-codigo='{op_id}']",
-        f".nav-link.{op_id}",
-        f"a[aria-controls*='{op_id}']",
-    ]
-    link = None
-    for sel in sels:
+    import re
+    # 1) localizar el link del índice en cualquier frame
+    link, link_scope = None, None
+    for sc in _all_scopes(libro):
         try:
-            loc = S.locator(sel).first
-            if loc.count():
-                link = loc
-                break
+            _kill_overlays(sc)
         except Exception:
-            continue
+            pass
+        for sel in (
+            f"a[onclick*=\"onItemClick('{op_id}'\"]",
+            f"a[onclick*=\"onItemClick(\\\"{op_id}\\\"\"]",
+            f"a[href*=\"onItemClick('{op_id}'\"]",
+            f"a[href*=\"onItemClick(\\\"{op_id}\\\"\"]",
+            f"a[data-codigo='{op_id}']",
+            f".nav-link.{op_id}",
+            f"a[aria-controls*='{op_id}']",
+        ):
+            try:
+                loc = sc.locator(sel).first
+                if loc.count():
+                    link, link_scope = loc, sc
+                    break
+            except Exception:
+                continue
+        if link:
+            break
 
+    # 2) si no vino 'tipo', intentá inferirlo del link encontrado
+    if (not tipo) and link:
+        try:
+            oc = (link.get_attribute("onclick") or "") + " " + (link.get_attribute("href") or "")
+            m = re.search(r"onItemClick\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]([^'\"]+)['\"]", oc)
+            if m:
+                tipo = m.group(1)
+            else:
+                tipo = link.get_attribute("data-tipo") or ""
+        except Exception:
+            pass
+
+    # 3) intento principal: clic real en el link del índice
     clicked = False
     if link:
         try: link.scroll_into_view_if_needed()
         except Exception: pass
+        try: link.evaluate("el=>{el.target='_self'; el.rel='noopener';}")
+        except Exception: pass
         try:
-            # asegurar que no se abra en otra pestaña
-            try: link.evaluate("el=>{el.target='_self'; el.rel='noopener';}")
-            except Exception: pass
-            link.click()
-            clicked = True
+            link.click(); clicked = True
         except Exception:
             try:
-                link.click(force=True)
-                clicked = True
+                link.click(force=True); clicked = True
             except Exception:
                 try:
-                    link.evaluate("el=>el.click()")
-                    clicked = True
+                    link.evaluate("el=>el.click()"); clicked = True
                 except Exception:
                     pass
 
+    # 4) fallback: ejecutar onItemClick donde exista (página o cualquier frame)
     if not clicked:
-        # si tipo vino vacío, intentar inferirlo del DOM del Libro
-        if not tipo:
+        for sc in _all_scopes(libro):
             try:
-                loc = S.locator(
-                    f"a[onclick*=\"onItemClick('{op_id}'\"], a[href*=\"onItemClick('{op_id}'\"]"
-                ).first
-                if loc.count():
-                    oc = (loc.get_attribute("onclick") or "") + " " + (loc.get_attribute("href") or "")
-                    m = re.search(r"onItemClick\(\s*['\"][^'\"]+['\"]\s*,\s*['\"]([^'\"]+)['\"]", oc)
-                    if m: tipo = m.group(1)
+                has_fn = sc.evaluate("()=>typeof onItemClick==='function'")
             except Exception:
-                pass
-
-        # Disparar onItemClick SOLO en el scope del Libro (no en el portal)
-        for sc in [S] + list(getattr(S, "frames", [])):
+                has_fn = False
+            if not has_fn:
+                continue
             try:
-                u = getattr(sc, "url", "") or ""
-                if ("ExpedienteLibro.aspx" not in u) and (sc.locator("#indice, .indice").first.count() == 0):
-                    continue
-                has = sc.evaluate("()=>typeof onItemClick==='function'")
+                sc.evaluate("([id,t])=>onItemClick(id,t)", [op_id, tipo or ""])
+                clicked = True
+                break
             except Exception:
-                has = False
-            if has:
-                try:
-                    sc.evaluate("([id,t])=>onItemClick(id,t)", [op_id, tipo])
-                    clicked = True
-                    break
-                except Exception:
-                    continue
+                continue
 
-    try: S.wait_for_timeout(200)
-    except Exception: pass
+    # 5) último recurso: evento custom usado por algunas skins
+    if not clicked and link_scope:
+        try:
+            link_scope.evaluate(
+                "(id)=>{ const ev=new CustomEvent('SAC:onItemClick',{detail:{id}}); window.dispatchEvent(ev); }",
+                op_id
+            )
+        except Exception:
+            pass
+
 
 
 def _extraer_url_de_link(link, proxy_prefix: str) -> str | None:
@@ -2837,8 +2866,7 @@ def _convertir_html_a_pdf(html_path: Path, context, p, tmp_dir: Path) -> Path | 
     return None
 
 def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path) -> Path | None:
-    S = _libro_scope(libro)
-    cont = _buscar_contenedor_operacion(S, op_id)
+    cont = _buscar_contenedor_operacion(libro, op_id)
     if not cont:
         return None
     try:
