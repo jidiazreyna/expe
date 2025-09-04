@@ -1171,6 +1171,41 @@ def _get_proxy_prefix(page) -> str:
     # Sin proxy → Intranet directa
     return ""
 
+def _es_login_intranet(pg) -> bool:
+    """Detecta login del portal viejo o del portal Angular."""
+    u = (getattr(pg, "url", "") or "").lower()
+    if ("portalweb/login/login.aspx" in u) or ("portalwebnet/#/login" in u):
+        return True
+    try:
+        tiene_pwd = pg.locator("input[type='password']").first.count() > 0
+    except Exception:
+        tiene_pwd = False
+    try:
+        # texto típico del portal clásico
+        tiene_texto = pg.get_by_text(re.compile(r"ingrese\s+nombre\s+de\s+usuario\s+y\s+contraseña", re.I)).first.count() > 0
+    except Exception:
+        tiene_texto = False
+    return tiene_pwd and tiene_texto
+
+
+def _sac_host_base(page) -> str:
+    """
+    Si estamos proxificados (Teletrabajo), devolvés www.tribunales.gov.ar.
+    Si NO hay proxy, devolvés esquema+host de la URL actual (p.ej. aplicaciones.tribunales.gov.ar).
+    """
+    u = getattr(page, "url", "") or ""
+    try:
+        pu = urlparse(u)
+    except Exception:
+        pu = None
+    # Con proxy → siempre www.tribunales.gov.ar (lo antepone _get_proxy_prefix)
+    if "/proxy/" in u or "teletrabajo.justiciacordoba.gob.ar" in u:
+        return "https://www.tribunales.gov.ar"
+    # Sin proxy → quedate en el mismo host (aplicaciones.tribunales.gov.ar)
+    if pu and pu.scheme and pu.netloc:
+        return f"{pu.scheme}://{pu.netloc}"
+    # Fallback conservador
+    return "https://aplicaciones.tribunales.gov.ar"
 
 def _handle_loginconfirm(page):
     """Si aparece 'Already Logged In', clic en 'Log in Anyway'."""
@@ -1475,10 +1510,12 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     key  = _read_hidden_generic(sac, ["hdIdExpedienteKey"]) or ""
     lvl  = _read_hidden_generic(sac, ["hdNivelAcceso"]) or ""
 
-    base = "https://www.tribunales.gov.ar/SacInterior/_Expedientes/ExpedienteLibro.aspx"
     proxy_prefix = _get_proxy_prefix(sac)
+    base_host = _sac_host_base(sac)  # ← usa mismo host (aplicaciones...) si no hay proxy
+    base = f"{base_host}/SacInterior/_Expedientes/ExpedienteLibro.aspx"
     qs = f"idExpediente={exp_id}" + (f"&key={key}" if key else "") + (f"&nivelAcceso={lvl}" if lvl else "")
-    url = proxy_prefix + base + "?" + qs
+    url = (proxy_prefix + base) if proxy_prefix else base
+    url = url + "?" + qs
 
     try:
         # Abrir el Libro en una nueva pestaña para no perder la Radiografía
@@ -1597,9 +1634,7 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
 
     # Normalización básica para que no haya sticky/overflow raros
     try:
-        S.evaluate(
-            """
-            (id) => {
+        S.evaluate("""(id) => {
                 const el = document.querySelector(`[id='${id}'], [data-codigo='${id}']`);
                 if (!el) return;
                 el.style.overflow = 'visible'; el.style.maxHeight = 'unset'; el.style.height = 'auto';
@@ -2730,6 +2765,14 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     hp.goto(libro.url, wait_until="networkidle")
     hp.emulate_media(media="print")
     hp.pdf(path=str(out), format="A4", print_background=True, prefer_css_page_size=True)
+    # Si la exportación headless terminó en el login, descartalo
+    try:
+        if out.exists() and _pdf_es_login_portal(out):
+            logging.info("[PRINT:HEADLESS] Detectado login en PDF; se descarta.")
+            out.unlink(missing_ok=True)
+            return None
+    except Exception:
+        pass
 
     # 2) Fallback HEADLESS: mismo estado de sesión + Page.pdf()
     try:
@@ -2768,7 +2811,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
         except Exception:
             pass
 
-        if out.exists() and out.stat().st_size > 1024:
+        if out.exists() and out.stat().st_size > 1024 and not _pdf_es_login_portal(out):
             logging.info(f"[PRINT:HEADLESS] PDF libro guardado: {out.name}")
             return out
     except Exception as e:
@@ -3162,6 +3205,11 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             # 3) Abrir Libro y listar operaciones VISIBLES (sin forzar)
             etapa("Abriendo 'Expediente como Libro'")
             libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
+            if _es_login_intranet(libro):
+                _login_intranet(libro, intra_user, intra_pass)
+                # Si el ReturnUrl no nos llevó directo al libro, reintentar desde la pestaña de Radiografía
+                if "ExpedienteLibro.aspx" not in (libro.url or ""):
+                    libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
             etapa("Cargando índice del Libro")
             ops = _expandir_y_cargar_todo_el_libro(libro)
             logging.info(f"[LIBRO] Índice cargado · operaciones visibles={len(ops)}")
