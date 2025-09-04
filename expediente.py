@@ -3787,8 +3787,23 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 ops = []
             logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el índice.")
 
-            # 4) Carátula (NO usar imprimir oficial)
-            prim_dia = min(fechas_ops.values()) if fechas_ops else _dt.date.today()
+            # 4) Fechas y helpers → inicializar ANTES de usarlos
+            from collections import defaultdict
+            fechas_ops = _mapear_fechas_operaciones(sac)
+            prim_dia = min(fechas_ops.values()) if fechas_ops else datetime.date.today()
+
+            buckets = defaultdict(lambda: {"main": [], "mpf": [], "rnr": []})
+
+            def _push_main_for_day(day_key: datetime.date, pth: Path, hdr: str | None):
+                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                    return
+                pth = _maybe_ocr(pth)
+                try:
+                    pth = _pdf_sin_blancos(pth)
+                except Exception:
+                    pass
+                buckets[day_key]["main"].append((pth, hdr))
+
             etapa("Renderizando carátula del expediente")
             bloques: list[tuple[Path, str | None]] = []
             ya_agregados: set[tuple[str, int]] = set()
@@ -3822,22 +3837,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 if op_id in fechas_ops:
                     return fechas_ops[op_id]
                 # fallback: primer día conocido o hoy
-                return (min(fechas_ops.values()) if fechas_ops else _dt.date.today())
-
-            buckets = defaultdict(lambda: {"main": [], "mpf": [], "rnr": []})
-
-            # Helper: normaliza/estampa/dedup y agrega al merge
-            def _push_main_for_day(day_key: datetime.date, pth: Path, hdr: str | None):
-                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
-                    return
-                pth = _maybe_ocr(pth)   # ← aplica OCR aquí
-                try:
-                    pth = _pdf_sin_blancos(pth)
-                except Exception:
-                    pass
-                buckets[day_key]["main"].append((pth, hdr))
-
-
+                return (min(fechas_ops.values()) if fechas_ops else datetime.date.today())
 
             # Helper: adjuntos de operación (Libro + Grid)
             def _agregar_adjuntos_de_op(op_id: str, titulo: str, dia: datetime.date):
@@ -3912,7 +3912,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     try: libro_pdf = _pdf_sin_blancos(libro_pdf)
                     except Exception: pass
                     _mf(f"LIBRO · {libro_pdf.name}")
-                    _push_main_for_day(libro_pdf, None)
+                    _push_main_for_day(prim_dia, libro_pdf, None)
                 else:
                     logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
 
