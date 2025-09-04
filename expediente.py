@@ -35,9 +35,16 @@ from urllib3.util.retry import Retry
 
 from io import BytesIO
 
-import pytesseract
+try:
+    import pytesseract
+except Exception:
+    pytesseract = None
 
-import pypdfium2 as pdfium
+try:
+    import pypdfium2 as pdfium
+except Exception:
+    pdfium = None
+
 
 
 def _find_tesseract_portable(base_path: Path) -> Path | None:
