@@ -2608,7 +2608,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
     page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
     page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
-    ALLOW_DIRECT_INTRANET = _env_true("ALLOW_DIRECT_INTRANET","0")
+    ALLOW_DIRECT_INTRANET = _env_true("ALLOW_DIRECT_INTRANET","1")
     prefer_tele = bool(tele_user and tele_pass and _env_true("PREFER_TELE","1"))
 
     def _try_open(fn, label):
@@ -2627,7 +2627,10 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
     # 1) Si hay credenciales de Tele, ir por Tele primero
     if prefer_tele:
         try:
-            return _try_open(lambda: abrir_sac_via_teletrabajo(...), "TELETRABAJO")
+            return _try_open(
+                lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
+                "TELETRABAJO"
+            )
         except Exception as e:
             logging.info("[OPEN] Teletrabajo falló; pruebo Intranet directa")
             if not ALLOW_DIRECT_INTRANET:
@@ -2640,15 +2643,30 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
             pg = context.new_page()
             pg.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS","45000")))
             pg.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS","60000")))
-            pg.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
+            # Si la URL de Intranet no resuelve o está caída, disparamos un error reconocible
+            try:
+                pg.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
+            except Exception as e:
+                # DNS / conectividad: net::ERR_NAME_NOT_RESOLVED, ERR_CONNECTION_*
+                if "ERR_NAME_NOT_RESOLVED" in str(e) or "ERR_CONNECTION" in str(e):
+                    raise RuntimeError("INTRANET_NO_RESOLVE")
+                raise
             _login_intranet(pg, intra_user, intra_pass)
             if "aplicaciones.tribunales.gov.ar" not in (pg.url or ""):
                 _ensure_public_apps(pg)
             sac = _open_sac_desde_portal(pg)
             return _ir_a_radiografia(sac)
         return _try_open(_open_intranet, "INTRANET")
-    except Exception:
-        pass
+    except Exception as e:
+        # Fallback explícito a Teletrabajo si Intranet no está disponible
+        if tele_user and tele_pass:
+            logging.info("[OPEN] INTRANET inaccesible; redirijo a Teletrabajo")
+            return _try_open(
+                lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
+                "TELETRABAJO"
+            )
+        # Si no hay credenciales de Teletrabajo, re‑lanzamos el error original
+        raise
 
     # 3) Último intento por Tele si no lo probamos primero
     if not prefer_tele and tele_user and tele_pass:
