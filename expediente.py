@@ -31,6 +31,137 @@ os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BASE_PATH / "ms-playwright")
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# ==== OCR portátil, sin PyMuPDF, usando pypdfium2 + pytesseract ====
+
+from io import BytesIO
+
+import pytesseract
+
+import pypdfium2 as pdfium
+
+
+def _find_tesseract_portable(base_path: Path) -> Path | None:
+    """
+    Busca tesseract.exe empaquetado al lado del .exe/.py (o dentro de _MEIPASS).
+    """
+    candidates = [
+        base_path / "tesseract" / "tesseract.exe",
+        base_path / "bin" / "tesseract.exe",  # por si lo guardaste en otra carpeta
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+def _configurar_tesseract(base_path: Path) -> bool:
+    """
+    Configura pytesseract para usar el binario portable. Setea TESSDATA_PREFIX.
+    Devuelve True si quedó operativo.
+    """
+    exe = _find_tesseract_portable(base_path)
+    if not exe:
+        logging.info("[OCR] No se encontró tesseract.exe junto al ejecutable/script.")
+        return False
+    tessdata = exe.parent / "tessdata"
+    os.environ.setdefault("TESSDATA_PREFIX", str(tessdata))
+    pytesseract.pytesseract.tesseract_cmd = str(exe)
+    try:
+        v = pytesseract.get_tesseract_version()
+        logging.info(f"[OCR] Tesseract OK · {v}")
+        return True
+    except Exception as e:
+        logging.info(f"[OCR] Tesseract no respondió: {e}")
+        return False
+
+def _pdf_tiene_texto(pdf_path: Path, max_pages: int = 3) -> bool:
+    """
+    Heurística rápida: si pdfminer encuentra algo de texto en las primeras páginas,
+    consideramos que no necesita OCR.
+    """
+    try:
+        from pdfminer.high_level import extract_text
+        text = extract_text(str(pdf_path), maxpages=max_pages) or ""
+        return bool(text.strip())
+    except Exception:
+        # Si falla pdfminer, probamos con PyPDF2 (menos preciso)
+        try:
+            r = PdfReader(str(pdf_path))
+            for i, p in enumerate(r.pages[:max_pages]):
+                if (p.extract_text() or "").strip():
+                    return True
+        except Exception:
+            pass
+        return False
+
+def ocr_pdf_portable(pdf_in: Path, pdf_out: Path | None = None, langs: str = "spa+eng", dpi: int = 300) -> Path:
+    """
+    Convierte 'pdf_in' a PDF con capa de texto usando Tesseract portable.
+    - Renderiza cada página con pypdfium2 (sin PyMuPDF).
+    - Corre pytesseract.image_to_pdf_or_hocr para obtener PDF 'searchable'.
+    """
+    pdf_in = Path(pdf_in)
+    if not pdf_in.exists():
+        raise FileNotFoundError(pdf_in)
+
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    if not _configurar_tesseract(base_path):
+        logging.info("[OCR] No hay Tesseract → devuelvo original sin OCR.")
+        return pdf_in
+
+    if pdf_out is None:
+        pdf_out = pdf_in.with_suffix(".ocr.pdf")
+
+    merger = PdfMerger()
+    doc = pdfium.PdfDocument(str(pdf_in))
+    scale = dpi / 72.0  # 72 dpi → factor de escala
+
+    try:
+        for i in range(len(doc)):
+            page = doc[i]
+            # Render a PIL (RGB); si hay alpha, convertilo
+            pil = page.render(scale=scale).to_pil()
+            if pil.mode != "RGB":
+                pil = pil.convert("RGB")
+
+            # Tesseract devuelve un PDF monoplana en bytes
+            pdf_bytes = pytesseract.image_to_pdf_or_hocr(pil, extension="pdf", lang=langs)
+            merger.append(BytesIO(pdf_bytes))
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+    with open(pdf_out, "wb") as f:
+        merger.write(f)
+    merger.close()
+    logging.info(f"[OCR] Generado: {pdf_out.name}")
+    return pdf_out
+
+def _ocr_if_needed(pdf_path: Path) -> Path:
+    """
+    Aplica OCR si:
+      - OCR_ENABLE=1 (default) y NO hay texto,
+      - o siempre si OCR_FORCE=1.
+    Usa idiomas de OCR_LANGS (default: spa+eng) y DPI OCR_DPI (default: 300).
+    """
+    if os.getenv("OCR_ENABLE", "1").lower() not in ("1","true","t","yes","y","si","sí"):
+        return pdf_path
+
+    try:
+        force = os.getenv("OCR_FORCE", "0").lower() in ("1","true","t","yes","y","si","sí")
+        if not force and _pdf_tiene_texto(pdf_path):
+            logging.info(f"[OCR] {pdf_path.name}: ya tiene texto → salto OCR.")
+            return pdf_path
+
+        langs = os.getenv("OCR_LANGS", "spa+eng")
+        dpi = int(os.getenv("OCR_DPI", "300"))
+        out = ocr_pdf_portable(pdf_path, langs=langs, dpi=dpi)
+        return out if out.exists() else pdf_path
+    except Exception as e:
+        logging.info(f"[OCR:ERR] {pdf_path.name}: {e}")
+        return pdf_path
+
 # ───────── Seguridad/Permisos ─────────
 PERM_MSG = "El usuario no tiene los permisos suficientes para visualizar este contenido."
 
@@ -196,7 +327,7 @@ def _asegurar_seccion_operaciones_visible(page):
                 pass
         if (not cont.count() or oculto) and toggle.count():
             toggle.click()
-            page.wait_for_timeout(250)
+            page.wait_for_timeout(100)
         # desplazar título/tabla a la vista
         for sel in ["#cphDetalle_gvOperaciones", "table[id*='gvOperaciones']", "text=/^\\s*OPERACIONES\\s*$/i"]:
             loc = page.locator(sel).first
@@ -211,7 +342,7 @@ def etapa(msg: str):
     """Marca una etapa visible en la ventana de progreso y en el debug.log."""
     logging.info(f"[ETAPA] {msg}")
 
-def _esperar_radiografia_listo(page, timeout=300):
+def _esperar_radiografia_listo(page, timeout=120):
     """
     Espera a que Radiografía termine de cargar luego de la búsqueda.
     Considera AJAX: esperamos a ver carátula/fojas y que 'Operaciones' o 'Adjuntos'
@@ -227,7 +358,10 @@ def _esperar_radiografia_listo(page, timeout=300):
         "text=/\\bTotal de Fojas\\b/i",
         "#cphDetalle_lblNroExpediente",
     ]
-    while (time.time() - t0) * 300 < timeout:
+    # timeout viene en ms → convertimos a segundos
+    deadline = t0 + (max(0, int(timeout)) / 1000.0)
+    while time.time() < deadline:
+        
         try:
             hay_carat = any(page.locator(s).first.count() for s in pistas_ok)
         except Exception:
@@ -257,7 +391,7 @@ def _esperar_radiografia_listo(page, timeout=300):
             page.wait_for_timeout(300)
             return
 
-        page.wait_for_timeout(250)
+        page.wait_for_timeout(120)
 
     # timeout: igual seguimos, pero ya dimos tiempo razonable
 
@@ -606,7 +740,7 @@ def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bo
         pass
 
     # Espera corta en la page principal
-    deadline = time.time() + max(0, wait_ms) / 300.0
+    deadline = time.time() + max(0, wait_ms) / 1000.0
     while time.time() < deadline:
         _cosechar(sac)
         if ids:
@@ -670,7 +804,7 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
                 ".ui-dialog, .modal, [role='dialog'], div[id*='TextoOp'], div[id*='TextoOperacion']"
             ).filter(has_text=re.compile(r"operaci[oó]n", re.I)).last
             try:
-                dialog.wait_for(state="visible", timeout=300)
+                dialog.wait_for(state="visible", timeout=180)
                 contenido = (dialog.inner_text() or "")
             except Exception:
                 contenido = ""
@@ -824,7 +958,7 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
                 ".ui-dialog:has-text('TEXTO DE LA OPERACIÓN'), .modal:has-text('TEXTO DE LA OPERACIÓN')"
             ).last
             try:
-                dialog.wait_for(state="visible", timeout=300)
+                dialog.wait_for(state="visible", timeout=180)
                 contenido = _texto_modal_operacion(dialog, timeout=300)
             except Exception:
                 contenido = ""
@@ -1101,6 +1235,150 @@ def fusionar_pdfs(lista, destino: Path):
             w.add_page(p)
     with open(destino, "wb") as f:
         w.write(f)
+
+# ─────────── OCR helpers (sin dependencia de PyMuPDF) ───────────
+try:
+    import pypdfium2 as pdfium
+except Exception:
+    pdfium = None
+
+try:
+    import pytesseract
+except Exception:
+    pytesseract = None
+
+def _find_tesseract_cmd() -> str | None:
+    import shutil
+    cand = [
+        os.getenv("TESSERACT_CMD", "").strip() or None,
+        str(BASE_PATH / "tesseract" / "tesseract.exe"),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        shutil.which("tesseract"),
+    ]
+    for c in cand:
+        if c and Path(c).exists():
+            return c
+    return None
+
+def _pdf_tiene_texto(path: Path, paginas=3) -> bool:
+    try:
+        r = PdfReader(str(path))
+        n = min(len(r.pages), max(1, int(paginas)))
+        for i in range(n):
+            t = (r.pages[i].extract_text() or "").strip()
+            if t:
+                return True
+        return False
+    except Exception:
+        # Si no podemos leer, nos comportamos conservador: forzamos OCR en modo auto.
+        return False
+
+def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
+    # Usa CLI si existe; si no, intenta API Python.
+    import shutil, subprocess
+    exe = shutil.which("ocrmypdf") or str(BASE_PATH / "ocrmypdf.exe")
+    args = ["--skip-text", "--optimize", "1", "--fast-web-view", "1",
+            "--rotate-pages", "--deskew", "-l", langs]
+    if force:
+        args[0] = "--force-ocr"
+    try:
+        if exe and Path(exe).exists():
+            subprocess.run([exe, *args, str(src), str(dst)],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return dst.exists() and dst.stat().st_size > 1024
+        # API
+        try:
+            import ocrmypdf as _ocr
+            _ocr.ocr(str(src), str(dst), language=langs,
+                     force_ocr=force, rotate_pages=True, deskew=True,
+                     optimize=1, skip_text=not force)
+            return dst.exists() and dst.stat().st_size > 1024
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+def _ocr_con_pdfium_y_tesseract(src: Path, dst: Path, langs: str, dpi: int) -> bool:
+    # Requiere pypdfium2 + pytesseract + binario de tesseract
+    if not (pdfium and pytesseract):
+        return False
+    cmd = _find_tesseract_cmd()
+    if not cmd:
+        return False
+    # Configurar Tesseract portable (tessdata al lado del exe)
+    os.environ.setdefault("TESSDATA_PREFIX", str(Path(cmd).parent / "tessdata"))
+    pytesseract.pytesseract.tesseract_cmd = cmd
+
+    tmp = dst.with_suffix(".tmpdir")
+    tmp.mkdir(exist_ok=True, parents=True)
+    pages_out = []
+
+    try:
+        doc = pdfium.PdfDocument(str(src))
+        scale = max(72, int(dpi)) / 72.0
+        for i in range(len(doc)):
+            pg = doc[i]
+            bmp = pg.render(scale=scale).to_pil()  # PIL.Image
+            pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                bmp, extension="pdf", lang=langs
+            )
+            pth = tmp / f"page_{i:05d}.pdf"
+            with open(pth, "wb") as f:
+                f.write(pdf_bytes)
+            pages_out.append(pth)
+        # Fusionar páginas OCR a un solo PDF
+        merger = PdfMerger()
+        for p in pages_out:
+            merger.append(str(p))
+        with open(dst, "wb") as f:
+            merger.write(f)
+        merger.close()
+        return dst.exists() and dst.stat().st_size > 1024
+    except Exception:
+        return False
+    finally:
+        # limpieza
+        try:
+            for p in pages_out:
+                p.unlink(missing_ok=True)
+            tmp.rmdir()
+        except Exception:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+def _maybe_ocr(pdf_in: Path) -> Path:
+    """
+    Devuelve un PDF con capa de texto, usando:
+      1) ocrmypdf (si está),
+      2) pypdfium2 + pytesseract (+ tesseract portable).
+    Respeta OCR_MODE: off | auto | force.
+    """
+    mode = os.getenv("OCR_MODE", "auto").lower()
+    if mode not in {"off","auto","force"}:
+        mode = "auto"
+    langs = os.getenv("OCR_LANGS", "spa+eng")
+    dpi = int(os.getenv("OCR_DPI", "300"))
+
+    if mode == "off":
+        return pdf_in
+
+    needs = (mode == "force") or (not _pdf_tiene_texto(pdf_in))
+    if not needs:
+        return pdf_in
+
+    dst = pdf_in.with_suffix(".ocr.pdf")
+
+    # 1) ocrmypdf
+    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=(mode=="force")):
+        return dst
+
+    # 2) pdfium + tesseract
+    if _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
+        return dst
+
+    # Si todo falló, devolvemos el original sin romper el flujo
+    return pdf_in
+
+
 
 # ─────────────────────────── Helpers UI/DOM ────────────────────────────
 def _pick_selector(page, candidates):
@@ -2317,27 +2595,35 @@ def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Pa
         logging.info(f"[DL:ERR]   {destino.name} · {e}")
         return None
 
-def _imagen_a_pdf_fast(img: Path) -> Path:
+def _imagen_a_pdf_fast(img: Path, margin_mm: float = 10.0) -> Path:
+    """
+    Convierte una imagen a PDF A4, manteniendo proporciones y con margen.
+    Requiere img2pdf.
+    """
+    import img2pdf
     pdf = img.with_suffix(".pdf")
-    logging.info(f"[CNV:IMG]  {img.name}  →  {pdf.name}")
-    try:
-        import img2pdf
-        with open(pdf, "wb") as f:
-            f.write(img2pdf.convert(str(img)))
-        logging.info(f"[CNV:OK ]  {pdf.name}")
-        return pdf
-    except Exception:
-        Image.open(img).save(pdf, "PDF", resolution=144.0)
-        logging.info(f"[CNV:OK ]  {pdf.name}")
-        return pdf
+    # A4 en puntos (72 pt por pulgada) usando helpers de img2pdf
+    a4 = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
+    border = (img2pdf.mm_to_pt(margin_mm), img2pdf.mm_to_pt(margin_mm))
+    layout_fun = img2pdf.get_layout_fun(
+        pagesize=a4,
+        border=border,
+        fit=img2pdf.FitMode.SHRINK_TO_FIT,  # nunca agranda más de A4; conserva relación de aspecto
+        auto_orient=True
+    )
+    with open(pdf, "wb") as f:
+        f.write(img2pdf.convert(str(img), layout_fun=layout_fun))
+    return pdf
+
 
 
 def _ensure_pdf_fast(path: Path) -> Path:
     ext = path.suffix.lower()
     if ext == ".pdf":
-        return path
+        return _maybe_ocr(path)
     if ext in {".jpg",".jpeg",".png",".tif",".tiff",".bmp"}:
-        return _imagen_a_pdf_fast(path)
+        pdf = _imagen_a_pdf_fast(path)
+        return _maybe_ocr(pdf)
 
     soffice = _shutil.which("soffice") or _shutil.which("soffice.exe") or r"C:\Program Files\LibreOffice\program\soffice.exe"
     if soffice and Path(str(soffice)).exists():
@@ -2350,7 +2636,7 @@ def _ensure_pdf_fast(path: Path) -> Path:
             pdf = path.with_suffix(".pdf")
             if pdf.exists():
                 logging.info(f"[CNV:OK ]  {pdf.name}")
-                return pdf
+                return _maybe_ocr(pdf) 
         except Exception as e:
             logging.info(f"[CNV:ERR] {path.name} · {e}")
     return path
@@ -3215,19 +3501,19 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
             etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
             # dar tiempo a que cargue toda la vista (carátula + grillas)
-            _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "500")))
+            _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "150")))
             logging.info("[RADIO] Vista de Radiografía cargada (carátula/operaciones/adjuntos visibles)")
             # listar operaciones rápido (con frames); darle un poco más de tiempo
             op_ids_rad = _listar_ops_ids_radiografia(
                 sac,
-                wait_ms=int(os.getenv("RADIO_OPS_WAIT_MS", "500")),
+                wait_ms=int(os.getenv("RADIO_OPS_WAIT_MS", "150")),
                 scan_frames=True
             )
 
             # Verificación de acceso:
             acceso_ok = False
             if op_ids_rad:
-                ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:min(5, len(op_ids_rad))]
+                ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
 
                 # 1) Si ALGUNA operación probada muestra el cartel → abortamos TODO
                 if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
@@ -3307,12 +3593,15 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     key = (pth.name, 0)
                 if key in ya_agregados:
                     return
-                ya_agregados.add(key)
+                # ← OCR aquí
+                pth = _maybe_ocr(pth)
+
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
                     pass
                 bloques.append((pth, hdr))
+
 
             # Helper: adjuntos de operación (Libro + Grid)
             def _agregar_adjuntos_de_op(op_id: str, titulo: str):
