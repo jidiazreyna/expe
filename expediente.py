@@ -1419,18 +1419,36 @@ def _find_tesseract_cmd() -> str | None:
     return None
 
 
-def _pdf_tiene_texto(path: Path, paginas=3) -> bool:
+def _pdf_char_count(path: Path, paginas: int = 3) -> int:
+    """
+    Cuenta caracteres de texto en las primeras `paginas` del PDF.
+    Usa pdfminer si está; si no, PyPDF2. Devuelve un entero.
+    """
     try:
-        r = PdfReader(str(path))
-        n = min(len(r.pages), max(1, int(paginas)))
-        for i in range(n):
-            t = (r.pages[i].extract_text() or "").strip()
-            if t:
-                return True
-        return False
+        from pdfminer.high_level import extract_text
+        txt = extract_text(str(path), maxpages=int(paginas)) or ""
+        return len((txt or "").strip())
     except Exception:
-        # Si no podemos leer, nos comportamos conservador: forzamos OCR en modo auto.
-        return False
+        try:
+            r = PdfReader(str(path))
+            n = min(len(r.pages), max(1, int(paginas)))
+            total = 0
+            for i in range(n):
+                t = (r.pages[i].extract_text() or "").strip()
+                total += len(t)
+            return total
+        except Exception:
+            return 0
+
+
+def _has_enough_text(path: Path, paginas: int = 3) -> bool:
+    """
+    True si el PDF tiene "suficiente" texto (umbral configurable).
+    Evita falsos positivos por 1–2 caracteres sueltos.
+    """
+    min_chars = int(os.getenv("OCR_MIN_CHARS", "80"))  # podés subirlo a 120/150 si querés
+    return _pdf_char_count(path, paginas=paginas) >= min_chars
+
 
 
 def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
@@ -1535,36 +1553,77 @@ def _ocr_con_pdfium_y_tesseract(src: Path, dst: Path, langs: str, dpi: int) -> b
 
 def _maybe_ocr(pdf_in: Path) -> Path:
     """
-    Devuelve un PDF con capa de texto, usando:
-    1) ocrmypdf (si está),
-    2) pypdfium2 + pytesseract (+ tesseract portable).
-    Respeta OCR_MODE: off | auto | force.
+    Devuelve un PDF con capa de texto.
+    Lógica:
+      - OCR_MODE=off    -> nunca
+      - OCR_MODE=force  -> siempre (force-ocr)
+      - OCR_MODE=auto   -> si tiene pocos caracteres (OCR_MIN_CHARS), force-ocr;
+                           si no, intento "skip-text" para páginas sin texto más adelante.
     """
     mode = os.getenv("OCR_MODE", "auto").lower()
-    if mode not in {"off", "auto", "force"}:
-        mode = "auto"
-
     langs = os.getenv("OCR_LANGS", "spa+eng")
     dpi = int(os.getenv("OCR_DPI", "300"))
+    sample_pages = int(os.getenv("OCR_SAMPLE_PAGES", "3"))
+
+    try:
+        logging.info(f"[OCR] check · {pdf_in.name}")
+    except Exception:
+        pass
 
     if mode == "off":
+        logging.info("[OCR] OFF → salto OCR")
         return pdf_in
 
-    needs = (mode == "force") or (not _pdf_tiene_texto(pdf_in))
-    if not needs:
-        return pdf_in
+    # Decisión por umbral
+    if mode == "force":
+        need_ocr = True
+        force = True
+    else:
+        enough = _has_enough_text(pdf_in, paginas=sample_pages)
+        # Si "hay poco texto", es típico de escaneados con 1–2 caracteres basura → forzar OCR
+        need_ocr = not enough
+        force = True  # importante: forzamos para no caer en el falso positivo de "skip-text"
 
     dst = pdf_in.with_suffix(".ocr.pdf")
+    def _ocr_preflight_log():
+        import shutil
+        try:
+            from shutil import which
+        except:
+            which = shutil.which
+        ocrmypdf_ok = bool(which("ocrmypdf") or (BASE_PATH / "ocrmypdf.exe").exists())
+        tesseract_path = _find_tesseract_cmd()
+        logging.info(f"[OCR:CFG] mode={os.getenv('OCR_MODE','auto')} langs={os.getenv('OCR_LANGS','spa+eng')} dpi={os.getenv('OCR_DPI','300')}")
+        logging.info(f"[OCR:STA] ocrmypdf={'OK' if ocrmypdf_ok else 'MISSING'} | tesseract={'OK:'+tesseract_path if tesseract_path else 'MISSING'} | pdfium={'OK' if pdfium else 'MISSING'} | pytesseract={'OK' if pytesseract else 'MISSING'}")
 
-    # 1) ocrmypdf
-    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=(mode == "force")):
+    # llámalo al iniciar (una vez):
+    _ocr_preflight_log()
+
+    # 1) Preferir ocrmypdf
+    ok = False
+    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=force if (mode != "off") else False):
+        ok = True
+    # 2) Fallback a pdfium + tesseract (solo si realmente necesitamos OCR)
+    elif need_ocr and _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
+        ok = True
+
+    if ok:
+        try:
+            logging.info(f"[OCR] {'FORCE' if force else 'AUTO'} → {dst.name}")
+        except Exception:
+            pass
         return dst
 
-    # 2) pdfium + tesseract
-    if _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
-        return dst
+    # 3) Si en AUTO “parecía” que tenía texto suficiente, igual probá un pase skip-text
+    if (mode == "auto") and not need_ocr:
+        if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=False):
+            logging.info("[OCR] SKIP-TEXT pass → OK")
+            return dst
 
-    # Si todo falló, devolvemos el original sin romper el flujo
+    logging.info("[OCR] no aplicado ("
+            + ("sin ocrmypdf, " if not (shutil.which('ocrmypdf') or (BASE_PATH / 'ocrmypdf.exe').exists()) else "")
+            + ("sin tesseract/pdfium" if not _find_tesseract_cmd() or not (pdfium and pytesseract) else "condición")
+            + ")")
     return pdf_in
 
 
@@ -1741,88 +1800,83 @@ def _extract_url_from_js(js: str) -> str | None:
 
 
 def _fill_radiografia_y_buscar(page, nro_exp):
-    """Completa el Nº de Expediente en Radiografía y ejecuta la búsqueda (Enter o botón)."""
+    def _first_visible_in_scopes(scopes, selectors):
+        for sc in scopes:
+            for sel in selectors:
+                try:
+                    loc = sc.locator(sel).first
+                    if loc.count():
+                        try:
+                            loc.wait_for(state="visible", timeout=1500)
+                        except Exception:
+                            pass
+                        if loc.is_visible():
+                            return sc, loc
+                except Exception:
+                    pass
+        return None, None
 
-    def _first_visible(selectors):
-        for sel in selectors:
-            try:
-                loc = page.locator(sel).first
-                if loc.count():
-                    try:
-                        loc.wait_for(state="visible", timeout=1500)
-                    except Exception:
-                        pass
-                    if loc.is_visible():
-                        return loc
-            except Exception:
-                pass
-        return None
+    scopes = [page] + list(page.frames)
+    _kill_overlays(page)
 
-    # 1) textbox (ids pueden cambiar: usamos 'termina con' y varios fallbacks)
-    txt = _first_visible(
-        [
-            "#txtNroExpediente",
-            "input[id$='txtNroExpediente']",
-            "input[name$='txtNroExpediente']",
-            "xpath=//label[normalize-space()='Número de Expediente:']/following::input[1]",
-            "xpath=//td[contains(normalize-space(.),'Número de Expediente')]/following::input[1]",
-            "xpath=//input[@type='text' and (contains(@id,'Expediente') or contains(@name,'Expediente'))]",
-        ]
-    )
+    sc, txt = _first_visible_in_scopes(scopes, [
+        "#txtNroExpediente",
+        "input[id$='txtNroExpediente']",
+        "input[name$='txtNroExpediente']",
+        "xpath=//label[normalize-space()='Número de Expediente:']/following::input[1]",
+        "xpath=//td[contains(normalize-space(.),'Número de Expediente')]/following::input[1]",
+        "xpath=//input[@type='text' and (contains(@id,'Expediente') or contains(@name,'Expediente'))]",
+        "input[type='text']"
+    ])
     if not txt:
-        # último recurso: primer textbox visible del panel central
-        txt = page.get_by_role("textbox").first
-        if not txt or not txt.count():
-            _debug_dump(page, "no_txt_expediente")
-            raise RuntimeError("No pude ubicar el campo 'Número de Expediente'.")
+        _debug_dump(page, "no_txt_expediente")
+        raise RuntimeError("No pude ubicar el campo 'Número de Expediente'.")
 
     try:
         txt.scroll_into_view_if_needed()
     except Exception:
         pass
-
     txt.click()
     txt.fill(str(nro_exp))
 
-    # 2) Enter y, si no dispara, probamos el botón
+    # Enter o botón Buscar en el MISMO scope
     try:
         txt.press("Enter")
-        page.wait_for_load_state("networkidle")
+        sc.wait_for_load_state("networkidle")
     except Exception:
         pass
 
-    # botón “Buscar” (la lupita) – varios posibles selectores
-    if "Radiografia.aspx" in page.url:
-        # seguimos en la vista → quizá no buscó
-        btn = _first_visible(
-            [
-                "#btnBuscarExp",
-                "input[id$='btnBuscarExp']",
-                "xpath=//input[@type='image' or @type='submit'][contains(@id,'Buscar') or contains(@value,'Buscar')]",
-                "xpath=//a[.//img[contains(@src,'buscar') or contains(@alt,'Buscar')]]",
-            ]
-        )
-        if btn:
-            try:
-                btn.click()
-                page.wait_for_load_state("networkidle")
-            except Exception:
-                pass
-    else:
-        # click al primer botón vecino del input (por si es una imagen)
+    # Enter ya se probó arriba. Si hace falta botón, buscá en pasos.
+    btn = sc.locator("#btnBuscarExp, input[id$='btnBuscarExp']").first
+
+    if not btn.count():
+        # Botones 'Buscar' (por accesibilidad/role)
+        import re
+        btn = sc.get_by_role("button", name=re.compile(r"buscar", re.I)).first
+
+    if not btn.count():
+        # Inputs que suelen usarse como botón de búsqueda
+        btn = sc.locator(
+            "input[type='submit'][value*='Buscar'], "
+            "input[type='image'][alt*='Buscar'], "
+            "input[title*='Buscar']"
+        ).first
+
+    if not btn.count():
+        # XPath en un selector **separado**, nunca mezclado con CSS
+        btn = sc.locator(
+            "xpath=//input[( @type='image' or @type='submit') "
+            "and (contains(@id,'Buscar') or contains(@value,'Buscar') "
+            "or contains(@alt,'Buscar') or contains(@title,'Buscar'))]"
+        ).first
+
+    if btn.count():
         try:
-            txt.evaluate(
-                """
-                el => {
-                    const c = el.parentElement;
-                    const b = c && (c.querySelector("input[type=image],input[type=submit],button,a"));
-                    if (b) b.click();
-                }
-                """
-            )
-            page.wait_for_load_state("networkidle")
+            btn.click()
+            sc.wait_for_load_state("networkidle")
         except Exception:
             pass
+
 
 
 # --- Usa el que ya funcionaba en Teletrabajo ---
@@ -2445,11 +2499,6 @@ def _open_portal_aplicaciones_pj(page):
 # ───────────────────────── Intranet helpers ────────────────────────────
 def _login_intranet(page, intra_user, intra_pass):
     logging.info("[LOGIN] Buscando formulario de Intranet")
-    """
-    Login en la PÁGINA o en el FRAME que contenga el formulario (portal viejo o nuevo).
-    Si ya ve “Aplicaciones” / “Mi Escritorio” / “Desconectarse”, asume sesión activa.
-    """
-    import re
 
     try:
         page.wait_for_load_state("domcontentloaded")
@@ -2458,16 +2507,34 @@ def _login_intranet(page, intra_user, intra_pass):
 
     scopes = [page] + list(page.frames)
 
-    # ¿Ya estamos adentro?
-    for sc in scopes:
+    def _has_password(sc):
         try:
-            if sc.get_by_text(
-                re.compile(r"\b(Aplicaciones|Mi\s*Escritorio|Desconectarse)\b", re.I)
-            ).first.count():
-                logging.info("[LOGIN] Sesión ya activa (no se requirió login)")
-                return
+            return sc.locator("input[type='password']").first.count() > 0
         except Exception:
-            pass
+            return False
+
+    def _logged_in(sc):
+        # Sin password + link/acción de salir visibles
+        try:
+            if _has_password(sc):
+                return False
+            logout = sc.locator(
+                "a[href*='Logout'], a[href*='SignOut'], a[href*='logoff'], "
+                "a:has-text('Desconectarse'), a:has-text('Salir')"
+            ).first
+            return logout.count() > 0
+        except Exception:
+            return False
+
+    # ✅ Solo devolvé “ya activo” si de verdad vemos logout y no hay password en ningún lado
+    if any(_logged_in(sc) for sc in scopes):
+        logging.info("[LOGIN] Sesión ya activa (logout visible).")
+        return
+
+    # Si hay cualquier password en la página, vamos a completar el login
+    target_scope = None
+    user_box = None
+    pass_box = None
 
     def _first_visible(sc, selectors):
         for sel in selectors:
@@ -2482,8 +2549,35 @@ def _login_intranet(page, intra_user, intra_pass):
                         return loc
             except Exception:
                 pass
-        logging.info("[LOGIN] No se encontró formulario visible en la página/frames")
         return None
+
+    # Buscamos primero el password, luego el user en el mismo scope.
+    for sc in scopes:
+        p_ = _first_visible(sc, [
+            "input[id$='Password']",
+            "input[name$='Password']",
+            "input[type='password']",
+            "input[formcontrolname='password']",
+            "input[name='password']",
+        ])
+        if not p_:
+            continue
+        u_ = _first_visible(sc, [
+            "input[id$='UserName']",
+            "input[name$='UserName']",
+            "input[id$='txtUserName']",
+            "input[name$='txtUserName']",
+            "input[formcontrolname='username']",
+            "input[name='username']",
+            "input[type='text']",
+        ])
+        if u_:
+            target_scope, user_box, pass_box = sc, u_, p_
+            break
+
+    if not (target_scope and user_box and pass_box):
+        logging.info("[LOGIN] No se encontró un par usuario/clave visible; continúo sin login.")
+        return
 
     def _smart_fill(sc, el, val):
         try:
@@ -2498,155 +2592,50 @@ def _login_intranet(page, intra_user, intra_pass):
                 sc.evaluate(
                     "(el,val)=>{el.value=''; el.dispatchEvent(new Event('input',{bubbles:true})); "
                     "el.focus(); el.value=val; el.dispatchEvent(new Event('input',{bubbles:true}));}",
-                    el,
-                    val,
+                    el, val
                 )
             except Exception:
                 pass
-
-    user_sels = [
-        "#txtUserName",
-        "#txtUsuario",
-        "input[id$='UserName']",
-        "input[name$='UserName']",
-        "input[id$='txtUserName']",
-        "input[name$='txtUserName']",
-        "input[id*='UserLogin'][type='text']",
-        "input[name*='UserLogin'][type='text']",
-        "input[type='text'][name*='Usuario']",
-        "input[type='text'][aria-label*='Usuario']",
-        # Angular/Material
-        "input[formcontrolname='username']",
-        "input[name='username']",
-    ]
-    pass_sels = [
-        "#txtUserPassword",
-        "#txtContrasena",
-        "input[id$='Password']",
-        "input[name$='Password']",
-        "input[id$='txtUserPassword']",
-        "input[name$='txtUserPassword']",
-        "input[type='password']",
-        # Angular/Material
-        "input[formcontrolname='password']",
-        "input[name='password']",
-    ]
-
-    logging.info("[LOGIN] Usuario y contraseña completados; enviando formulario…")
-    btn_sels = [
-        "#btnLogIn",
-        "#btnIngresar",
-        "input[id$='btnLogIn']",
-        "input[name$='btnLogIn']",
-        "button[type='submit']",
-        "input[type='submit']",
-        "xpath=//button[not(@disabled) and (contains(.,'Ingresar') or contains(.,'Iniciar') or contains(.,'Entrar'))]",
-        "xpath=//span[normalize-space()='Ingresar' or normalize-space()='Iniciar sesión']/ancestor::button[1]",
-        "button:has-text('Ingresar')",
-        "button:has-text('Iniciar sesión')",
-    ]
-
-    target_scope = None
-    user_box = None
-    pass_box = None
-    for sc in scopes:
-        u = _first_visible(sc, user_sels)
-        p_ = _first_visible(sc, pass_sels)
-        if u and p_:
-            target_scope, user_box, pass_box = sc, u, p_
-            break
-
-    if not (target_scope and user_box and pass_box):
-        for sc in scopes:
-            p_ = _first_visible(sc, ["input[type='password']"])
-            if not p_:
-                continue
-            u = _first_visible(sc, ["input[type='text'], input[name='username']"])
-            if u:
-                target_scope, user_box, pass_box = sc, u, p_
-                break
-
-    if not (target_scope and user_box and pass_box):
-        return  # no hay formulario visible
 
     _kill_overlays(target_scope)
     _smart_fill(target_scope, user_box, intra_user)
     _smart_fill(target_scope, pass_box, intra_pass)
 
-    # 1) Enter sobre la contraseña (muchos logins Angular lo aceptan)
+    # Enviar (Enter o botón submit)
     try:
         pass_box.press("Enter")
         target_scope.wait_for_load_state("networkidle")
-        logging.info(f"[LOGIN] Post-login · url_actual={getattr(target_scope, 'url', None)}")
     except Exception:
         pass
 
-    # Si ya entró, salir
-    try:
-        if target_scope.get_by_text(
-            re.compile(r"\b(Aplicaciones|Mi\s*Escritorio|Desconectarse)\b", re.I)
-        ).first.count():
-            return
-    except Exception:
-        pass
-
-    # 2) Click cuando el botón esté habilitado
-    btn = _first_visible(target_scope, btn_sels)
-    clicked = False
+    btn = _first_visible(target_scope, [
+        "button[type='submit']",
+        "input[type='submit']",
+        "button:has-text('Ingresar')",
+        "button:has-text('Iniciar sesión')",
+        "xpath=//span[normalize-space()='Ingresar' or normalize-space()='Iniciar sesión']/ancestor::button[1]"
+    ])
     if btn and btn.count():
-        # esperar a que no esté disabled/aria-disabled=true
         try:
             target_scope.wait_for_function(
                 "(b)=>!b.disabled && b.getAttribute('aria-disabled')!=='true'",
-                arg=btn.element_handle(),
-                timeout=4000,
+                arg=btn.element_handle(), timeout=4000
             )
         except Exception:
             pass
         try:
             btn.click(timeout=3000)
-            clicked = True
         except Exception:
-            _kill_overlays(target_scope)
             try:
                 btn.click(force=True, timeout=2000)
-                clicked = True
             except Exception:
                 pass
 
-    # 3) Últimos recursos: submit del form o __doPostBack si existe
-    if not clicked:
-        try:
-            # submit real del form (mejor para Angular que escucha 'submit')
-            btn_el = btn.element_handle() if btn else None
-            target_scope.evaluate(
-                """(btn)=>{
-                    const el = btn || document.querySelector("button[type=submit],input[type=submit]");
-                    const form = el ? el.closest('form') : document.querySelector('form');
-                    if (form) {
-                        if (form.requestSubmit) form.requestSubmit(el || undefined);
-                        else form.submit();
-                    }
-                }""",
-                btn_el,
-            )
-        except Exception:
-            pass
-        try:
-            # ASP.NET clásico
-            unique = target_scope.locator(
-                "input[id$='btnLogIn'],input[name$='btnLogIn'],input[type='submit'],button[type='submit']"
-            ).first.get_attribute("name")
-            if unique:
-                target_scope.evaluate(
-                    "(n)=>{try{__doPostBack && __doPostBack(n,'')}catch(e){}}", unique
-                )
-        except Exception:
-            pass
-        try:
-            target_scope.wait_for_load_state("networkidle")
-        except Exception:
-            pass
+    try:
+        target_scope.wait_for_load_state("networkidle")
+    except Exception:
+        pass
+
 
 
 def _kill_overlays(page):
@@ -2952,7 +2941,9 @@ def _open_sac_desde_portal_teletrabajo(page):
     """
     logging.info("[NAV] Intentando abrir 'SAC Multifuero' desde portal actual")
     import re
-
+    # Si ya estamos en PublicApps.aspx (bajo proxy), delegá
+    if re.search(r"/PortalWeb/(Pages/)?PublicApps\.aspx", (page.url or ""), re.I):
+        return _open_sac_desde_portal_intranet(page)
     try:
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_load_state("networkidle")
@@ -3123,16 +3114,13 @@ def _open_sac_desde_portal_intranet(page):
 
 
 def _open_sac_desde_portal(page):
-    """
-    Dispatcher:
-    - Si estamos en Teletrabajo (URL del portal o proxificada) → versión Teletrabajo (menú Aplicaciones).
-    - Si estamos en tribunales.gov.ar o ya proxificados → versión Intranet.
-    """
+    import re
     u = page.url or ""
-    if "teletrabajo.justiciacordoba.gob.ar" in u or "/proxy/" in u:
+    if re.search(r"/PortalWeb/(Pages/)?PublicApps\.aspx", u, re.I):
+        return _open_sac_desde_portal_intranet(page)
+    if ("teletrabajo.justiciacordoba.gob.ar" in u) or ("/proxy/" in u):
         return _open_sac_desde_portal_teletrabajo(page)
     return _open_sac_desde_portal_intranet(page)
-
 
 def _ir_a_radiografia(sac):
     """
@@ -3172,52 +3160,42 @@ def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_p
     page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS", "45000")))
     page.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS", "60000")))
 
-    # 1) Login Teletrabajo
     page.goto(TELETRABAJO_URL, wait_until="domcontentloaded")
-    _fill_first(
-        page,
-        ['#username', 'input[name="username"]', 'input[name="UserName"]', 'input[type="text"]'],
-        tele_user,
-    )
-    _fill_first(
-        page,
-        ['#password', 'input[name="password"]', 'input[type="password"]'],
-        tele_pass,
-    )
-    if not _click_first(page, ['text=Continuar', 'button[type="submit"]', 'input[type="submit"]']):
-        page.keyboard.press("Enter")
-    page.wait_for_load_state("networkidle")
-    _handle_loginconfirm(page)
 
-    # 2) ¡SIEMPRE! traer la grilla del portal y clickear el tile (esto activa el proxy)
+    def _is_portal_grid(pg):
+        try:
+            u = pg.url or ""
+            # grilla SSLVPN o cards del portal
+            return ("static/sslvpn/portal" in u) or (pg.locator(".card .card-title span").first.count() > 0)
+        except Exception:
+            return False
+
+    # Login solo si NO estamos ya en el portal
+    if not _is_portal_grid(page):
+        try:
+            _fill_first(page, ['#username','input[name="username"]','input[name="UserName"]','input[type="text"]'], tele_user)
+            _fill_first(page, ['#password','input[name="password"]','input[type="password"]'], tele_pass)
+            if not _click_first(page, ['text=Continuar','button[type="submit"]','input[type="submit"]']):
+                page.keyboard.press("Enter")
+            page.wait_for_load_state("networkidle")
+            _handle_loginconfirm(page)
+        except Exception as e:
+            # Si no hay formulario pero sí vemos el portal, seguimos; si no, re-lanzamos
+            if not _is_portal_grid(page):
+                raise
+
+    # Traer grilla del portal (activa el proxy) y abrir el tile
     _goto_portal_grid(page)
-    try:
-        portal = _open_portal_aplicaciones_pj(page)  # ← Tile "Portal de Aplicaciones PJ"
-    except Exception:
-        # Fallback: solo si YA hay prefijo, ir directo a PublicApps con ese mismo prefijo
-        proxy_prefix = _get_proxy_prefix(page)
-        if not proxy_prefix:
-            raise
-        page.goto(
-            proxy_prefix + "https://www.tribunales.gov.ar/PortalWeb/PublicApps.aspx",
-            wait_until="domcontentloaded",
-        )
-        portal = page
+    portal = _open_portal_aplicaciones_pj(page)
 
-    # 3) Login Intranet (si hace falta)
     _login_intranet(portal, intra_user, intra_pass)
-
-    # 4) Abrir SAC desde el portal
     sac = _open_sac_desde_portal(portal)
-
-    # 5) Reintento suave si el proxy avisó error
     if _is_proxy_error(sac):
         _goto_portal_grid(portal)
         portal = _open_portal_aplicaciones_pj(portal)
         _login_intranet(portal, intra_user, intra_pass)
         sac = _open_sac_desde_portal(portal)
 
-    # 6) Radiografía
     return _ir_a_radiografia(sac)
 
 
@@ -3821,7 +3799,7 @@ def _env_true(name: str, default="0"):
 
 # ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
 def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, carpeta_salida):
-    SHOW_BROWSER = _env_true("SHOW_BROWSER", "0")
+    SHOW_BROWSER = _env_true("SHOW_BROWSER", "1")
     CHROMIUM_ARGS = ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
     KEEP_WORK = _env_true("KEEP_WORK", "0")
     STAMP = _env_true("STAMP_HEADERS", "1")
