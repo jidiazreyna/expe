@@ -1557,8 +1557,8 @@ def _maybe_ocr(pdf_in: Path) -> Path:
     Lógica:
       - OCR_MODE=off    -> nunca
       - OCR_MODE=force  -> siempre (force-ocr)
-      - OCR_MODE=auto   -> si tiene pocos caracteres (OCR_MIN_CHARS), force-ocr;
-                           si no, intento "skip-text" para páginas sin texto más adelante.
+      - OCR_MODE=auto   -> intenta ocrmypdf (skip-text); si falla y detecta poco texto,
+                           recurre al fallback con pdfium + tesseract.
     """
     mode = os.getenv("OCR_MODE", "auto").lower()
     langs = os.getenv("OCR_LANGS", "spa+eng")
@@ -1574,15 +1574,9 @@ def _maybe_ocr(pdf_in: Path) -> Path:
         logging.info("[OCR] OFF → salto OCR")
         return pdf_in
 
-    # Decisión por umbral
-    if mode == "force":
-        need_ocr = True
-        force = True
-    else:
-        enough = _has_enough_text(pdf_in, paginas=sample_pages)
-        # Si "hay poco texto", es típico de escaneados con 1–2 caracteres basura → forzar OCR
-        need_ocr = not enough
-        force = True  # importante: forzamos para no caer en el falso positivo de "skip-text"
+    # Determinar si el PDF parece tener poco texto (para fallback)
+    need_ocr = not _has_enough_text(pdf_in, paginas=sample_pages)
+    force = mode == "force"
 
     dst = pdf_in.with_suffix(".ocr.pdf")
     def _ocr_preflight_log():
@@ -1601,7 +1595,7 @@ def _maybe_ocr(pdf_in: Path) -> Path:
 
     # 1) Preferir ocrmypdf
     ok = False
-    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=force if (mode != "off") else False):
+    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=force):
         ok = True
     # 2) Fallback a pdfium + tesseract (solo si realmente necesitamos OCR)
     elif need_ocr and _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
@@ -1613,12 +1607,6 @@ def _maybe_ocr(pdf_in: Path) -> Path:
         except Exception:
             pass
         return dst
-
-    # 3) Si en AUTO “parecía” que tenía texto suficiente, igual probá un pase skip-text
-    if (mode == "auto") and not need_ocr:
-        if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=False):
-            logging.info("[OCR] SKIP-TEXT pass → OK")
-            return dst
 
     logging.info("[OCR] no aplicado ("
             + ("sin ocrmypdf, " if not (shutil.which('ocrmypdf') or (BASE_PATH / 'ocrmypdf.exe').exists()) else "")
