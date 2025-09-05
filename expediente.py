@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -21,7 +21,7 @@ import queue
 from tkinter import Toplevel, ttk
 from tkinter.scrolledtext import ScrolledText
 
-# ─────────────────────────── RUTAS Y RECURSOS ──────────────────────────
+# --------------------------- RUTAS Y RECURSOS --------------------------
 if getattr(sys, "frozen", False):  # ejecutable .exe
     BASE_PATH = Path(sys._MEIPASS)
 else:  # .py suelto
@@ -120,7 +120,7 @@ def ocr_pdf_portable(
 
     base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     if not _configurar_tesseract(base_path):
-        logging.info("[OCR] No hay Tesseract → devuelvo original sin OCR.")
+        logging.info("[OCR] No hay Tesseract ? devuelvo original sin OCR.")
         return pdf_in
 
     if pdf_out is None:
@@ -128,7 +128,7 @@ def ocr_pdf_portable(
 
     merger = PdfMerger()
     doc = pdfium.PdfDocument(str(pdf_in))
-    scale = dpi / 72.0  # 72 dpi → factor de escala
+    scale = dpi / 72.0  # 72 dpi ? factor de escala
 
     try:
         for i in range(len(doc)):
@@ -166,7 +166,7 @@ def _ocr_if_needed(pdf_path: Path) -> Path:
     try:
         force = os.getenv("OCR_FORCE", "0").lower() in ("1", "true", "t", "yes", "y", "si", "sí")
         if not force and _pdf_tiene_texto(pdf_path):
-            logging.info(f"[OCR] {pdf_path.name}: ya tiene texto → salto OCR.")
+            logging.info(f"[OCR] {pdf_path.name}: ya tiene texto ? salto OCR.")
             return pdf_path
 
         langs = os.getenv("OCR_LANGS", "spa+eng")
@@ -178,12 +178,12 @@ def _ocr_if_needed(pdf_path: Path) -> Path:
         return pdf_path
 
 
-# ───────── Seguridad/Permisos ─────────
+# --------- Seguridad/Permisos ---------
 PERM_MSG = "El usuario no tiene los permisos suficientes para visualizar este contenido."
 
 
 def _norm_ws(s: str) -> str:
-    # normaliza nbsp, tabs y saltos → 1 espacio; recorta extremos
+    # normaliza nbsp, tabs y saltos ? 1 espacio; recorta extremos
     import re
 
     return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip()
@@ -406,7 +406,7 @@ def _esperar_radiografia_listo(page, timeout=120):
         "#cphDetalle_lblNroExpediente",
     ]
 
-    # timeout viene en ms → convertimos a segundos
+    # timeout viene en ms ? convertimos a segundos
     deadline = t0 + (max(0, int(timeout)) / 1000.0)
 
     while time.time() < deadline:
@@ -438,7 +438,7 @@ def _esperar_radiografia_listo(page, timeout=120):
             hay_adj = False
 
         if hay_carat and (hay_ops_grid or hay_adj):
-            # ‘or True’ → si carátula ya cargó, damos unos ms extra y seguimos
+            # ‘or True’ ? si carátula ya cargó, damos unos ms extra y seguimos
             page.wait_for_timeout(300)
             return page.wait_for_timeout(120)
 
@@ -472,7 +472,7 @@ def _operacion_pdf_si_permitida(sac, op_id: str, tmp_dir: Path) -> Path | None:
         logging.info(f"[SEC] op {op_id}: no está visible en Radiografía; se omite.")
         return None
 
-    # Abrir el modal (click → fallback JS directo)
+    # Abrir el modal (click ? fallback JS directo)
     opened = False
     try:
         _kill_overlays(scope)
@@ -561,7 +561,7 @@ def _operacion_pdf_si_permitida(sac, op_id: str, tmp_dir: Path) -> Path | None:
     except Exception:
         pass
 
-    # Fallback: screenshot del modal (solo lo que vos ves) → PDF
+    # Fallback: screenshot del modal (solo lo que vos ves) ? PDF
     try:
         shot = tmp_dir / f"op_{op_id}.png"
         dialog.screenshot(path=str(shot))
@@ -678,8 +678,8 @@ def _descargar_ops_en_paralelo(
 
 def _ensure_pdf(path: Path) -> Path:
     """
-    Si path ya es PDF → lo devuelve. Si es imagen → convierte con PIL.
-    Si es doc/xls/ppt (y hay LibreOffice) → convierte con soffice.
+    Si path ya es PDF ? lo devuelve. Si es imagen ? convierte con PIL.
+    Si es doc/xls/ppt (y hay LibreOffice) ? convierte con soffice.
     Caso contrario, deja el archivo como está (no rompe).
     """
     ext = path.suffix.lower()
@@ -717,7 +717,7 @@ def _ensure_pdf(path: Path) -> Path:
     return path
 
 
-from PyPDF2 import PdfReader, PdfWriter, PdfMerger  # ← sumá PdfMerger
+from PyPDF2 import PdfReader, PdfWriter, PdfMerger  # ? sumá PdfMerger
 
 # --- MERGE TURBO con fitz y fallback agrupado con PyPDF2 ---
 try:
@@ -796,7 +796,7 @@ except Exception:
                 i = j
                 continue
 
-            # bloque con header → estampar a archivo temporal
+            # bloque con header ? estampar a archivo temporal
             stamped = Path(tempfile.mkstemp(suffix=".stamped.pdf")[1])
             try:
                 _estampar_header(Path(pdf_path), stamped, texto=str(hdr))
@@ -940,7 +940,7 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
                 except Exception:
                     pass
 
-            # ⟵ AQUÍ TAMBIÉN: sólo vale si hay contenido real
+            # ? AQUÍ TAMBIÉN: sólo vale si hay contenido real
             return _contenido_operacion_valido(contenido)
 
     return False
@@ -1044,7 +1044,7 @@ def _op_visible_con_contenido_en_radiografia(sac, op_id: str) -> bool:
 
     opened = any(_abrir_via_click_o_js(sc) for sc in [sac] + list(sac.frames))
     if not opened:
-        return False  # ⟵ si ni siquiera pudimos disparar el modal, NO hay acceso
+        return False  # ? si ni siquiera pudimos disparar el modal, NO hay acceso
 
     dialog = sac.locator(
         ".ui-dialog:has-text('TEXTO DE LA OPERACIÓN'), .modal:has-text('TEXTO DE LA OPERACIÓN')"
@@ -1111,7 +1111,7 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
     return False  # si ni siquiera pudimos abrir, no afirmamos denegación explícita
 
 
-# ───────────────────────── UTILIDADES PDF ──────────────────────────────
+# ------------------------- UTILIDADES PDF ------------------------------
 def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
     """
     Dibuja un marco en todo el borde y un texto (e.g. 'ADJUNTO – archivo.pdf')
@@ -1392,7 +1392,7 @@ def fusionar_pdfs(lista, destino: Path):
         w.write(f)
 
 
-# ─────────── OCR helpers (sin dependencia de PyMuPDF) ───────────
+# ----------- OCR helpers (sin dependencia de PyMuPDF) -----------
 try:
     import pypdfium2 as pdfium
 except Exception:
@@ -1551,7 +1551,7 @@ def _ocr_con_pdfium_y_tesseract(src: Path, dst: Path, langs: str, dpi: int) -> b
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _maybe_ocr(pdf_in: Path) -> Path:
+def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     """
     Devuelve un PDF con capa de texto.
     Lógica:
@@ -1560,23 +1560,24 @@ def _maybe_ocr(pdf_in: Path) -> Path:
       - OCR_MODE=auto   -> intenta ocrmypdf (skip-text); si falla y detecta poco texto,
                            recurre al fallback con pdfium + tesseract.
     """
-    mode = os.getenv("OCR_MODE", "auto").lower()
+    mode = os.getenv("OCR_MODE", "").lower()
+    if not mode:
+        mode = "force" if getattr(sys, "frozen", False) else "auto"
     langs = os.getenv("OCR_LANGS", "spa+eng")
     dpi = int(os.getenv("OCR_DPI", "300"))
     sample_pages = int(os.getenv("OCR_SAMPLE_PAGES", "3"))
-
     try:
         logging.info(f"[OCR] check · {pdf_in.name}")
     except Exception:
         pass
 
     if mode == "off":
-        logging.info("[OCR] OFF → salto OCR")
+        logging.info("[OCR] OFF ? salto OCR")
         return pdf_in
 
     # Determinar si el PDF parece tener poco texto (para fallback)
     need_ocr = not _has_enough_text(pdf_in, paginas=sample_pages)
-    force = mode == "force"
+    do_force = force or (mode == "force")
 
     dst = pdf_in.with_suffix(".ocr.pdf")
     def _ocr_preflight_log():
@@ -1595,7 +1596,7 @@ def _maybe_ocr(pdf_in: Path) -> Path:
 
     # 1) Preferir ocrmypdf
     ok = False
-    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=force):
+    if _ocr_con_ocrmypdf(pdf_in, dst, langs, force=do_force):
         ok = True
     # 2) Fallback a pdfium + tesseract (solo si realmente necesitamos OCR)
     elif need_ocr and _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi):
@@ -1603,7 +1604,7 @@ def _maybe_ocr(pdf_in: Path) -> Path:
 
     if ok:
         try:
-            logging.info(f"[OCR] {'FORCE' if force else 'AUTO'} → {dst.name}")
+            logging.info(f"[OCR] {'FORCE' if do_force else 'AUTO'} ? {dst.name}")
         except Exception:
             pass
         return dst
@@ -1615,7 +1616,7 @@ def _maybe_ocr(pdf_in: Path) -> Path:
     return pdf_in
 
 
-# ─────────────────────────── Helpers UI/DOM ────────────────────────────
+# --------------------------- Helpers UI/DOM ----------------------------
 def _pick_selector(page, candidates):
     for s in candidates:
         try:
@@ -1685,7 +1686,7 @@ def _get_proxy_prefix(page) -> str:
     except Exception:
         pass
 
-    # Sin proxy → Intranet directa
+    # Sin proxy ? Intranet directa
     return ""
 
 
@@ -1724,11 +1725,11 @@ def _sac_host_base(page) -> str:
     except Exception:
         pu = None
 
-    # Con proxy → siempre www.tribunales.gov.ar (lo antepone _get_proxy_prefix)
+    # Con proxy ? siempre www.tribunales.gov.ar (lo antepone _get_proxy_prefix)
     if "/proxy/" in u or "teletrabajo.justiciacordoba.gob.ar" in u:
         return "https://www.tribunales.gov.ar"
 
-    # Sin proxy → quedate en el mismo host (aplicaciones.tribunales.gov.ar)
+    # Sin proxy ? quedate en el mismo host (aplicaciones.tribunales.gov.ar)
     if pu and pu.scheme and pu.netloc:
         return f"{pu.scheme}://{pu.netloc}"
 
@@ -1938,11 +1939,11 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
         if nro_exp:  # <- re-busca el expediente
             _fill_radiografia_y_buscar(sac, nro_exp)
 
-    # ── Gate de Radiografía: ¿hay operaciones y puedo ver su contenido? ──
+    # -- Gate de Radiografía: ¿hay operaciones y puedo ver su contenido? --
     STRICT = _env_true("STRICT_ONLY_VISIBLE_OPS", "0")
     CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
 
-    op_ids_rad = _listar_ops_ids_radiografia(sac)  # ← antes decía p_ids_rad
+    op_ids_rad = _listar_ops_ids_radiografia(sac)  # ? antes decía p_ids_rad
 
     # 1) ¿Se ve alguna operación por DOM?
     hay_ops = bool(op_ids_rad)
@@ -1952,7 +1953,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
         hay_ops = _puedo_abrir_alguna_operacion(sac)
 
     if STRICT and not hay_ops:
-        logging.info("[SEC] Radiografía: no pude detectar operaciones → sin acceso. Abortando.")
+        logging.info("[SEC] Radiografía: no pude detectar operaciones ? sin acceso. Abortando.")
         messagebox.showwarning("Sin acceso", "No tenés acceso a este expediente (no aparecen operaciones).")
         return
 
@@ -1960,7 +1961,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     perm_ok = True
     if op_ids_rad:
         ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
-        # 1) Si ALGUNA operación probada muestra el cartel → abortamos TODO
+        # 1) Si ALGUNA operación probada muestra el cartel ? abortamos TODO
         if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
             logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
             messagebox.showwarning(
@@ -2003,7 +2004,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
                 if "PortalWeb/LogIn/Login.aspx" not in (sac.url or ""):
                     return sac
 
-                # si cayó al login → volver a Radiografía y reintentar una vez
+                # si cayó al login ? volver a Radiografía y reintentar una vez
                 _login_intranet(sac, intra_user, intra_pass)
                 _volver_a_radiografia_y_buscar()
 
@@ -2073,7 +2074,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     lvl = _read_hidden_generic(sac, ["hdNivelAcceso"]) or ""
 
     proxy_prefix = _get_proxy_prefix(sac)
-    base_host = _sac_host_base(sac)  # ← usa mismo host (aplicaciones...) si no hay proxy
+    base_host = _sac_host_base(sac)  # ? usa mismo host (aplicaciones...) si no hay proxy
     base = f"{base_host}/SacInterior/_Expedientes/ExpedienteLibro.aspx"
     qs = f"idExpediente={exp_id}" + (f"&key={key}" if key else "") + (f"&nivelAcceso={lvl}" if lvl else "")
     url = (proxy_prefix + base) if proxy_prefix else base
@@ -2153,7 +2154,7 @@ def _recorrer_indice_libro(libro):
                 a.scroll_into_view_if_needed()
             except Exception:
                 pass
-            # click normal → fallback a click JS
+            # click normal ? fallback a click JS
             try:
                 a.click(timeout=1500)
             except Exception:
@@ -2179,7 +2180,7 @@ def _recorrer_indice_libro(libro):
     libro.wait_for_timeout(300)
 
 
-# ───────────────── Capturar UNA operación a PDF ─────────────────
+# ----------------- Capturar UNA operación a PDF -----------------
 from PIL import Image
 
 
@@ -2217,7 +2218,7 @@ def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
     except Exception:
         pass
 
-    # → Captura directa del elemento (rápida)
+    # ? Captura directa del elemento (rápida)
     elem_png = tmp_dir / f"op_{op_id}.png"
     try:
         cont.scroll_into_view_if_needed()
@@ -2407,7 +2408,7 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
             continue
 
     return mapeo
-# ───────────────────── Portal → “Portal de Aplicaciones PJ” ────────────
+# --------------------- Portal ? “Portal de Aplicaciones PJ” ------------
 def _open_portal_aplicaciones_pj(page):
     """
     Abre el tile “Portal de Aplicaciones PJ” (NO el que empieza con INTRANET).
@@ -2484,7 +2485,7 @@ def _open_portal_aplicaciones_pj(page):
     return page
 
 
-# ───────────────────────── Intranet helpers ────────────────────────────
+# ------------------------- Intranet helpers ----------------------------
 def _login_intranet(page, intra_user, intra_pass):
     logging.info("[LOGIN] Buscando formulario de Intranet")
 
@@ -2514,7 +2515,7 @@ def _login_intranet(page, intra_user, intra_pass):
         except Exception:
             return False
 
-    # ✅ Solo devolvé “ya activo” si de verdad vemos logout y no hay password en ningún lado
+    # ? Solo devolvé “ya activo” si de verdad vemos logout y no hay password en ningún lado
     if any(_logged_in(sc) for sc in scopes):
         logging.info("[LOGIN] Sesión ya activa (logout visible).")
         return
@@ -2669,7 +2670,7 @@ def _ensure_public_apps(page):
     return page
 
 
-# ───────────────────────── CARGA DEL LIBRO ─────────────────────────────
+# ------------------------- CARGA DEL LIBRO -----------------------------
 def _expandir_y_cargar_todo_el_libro(libro):
     S = _libro_scope(libro)
     try:
@@ -2678,7 +2679,7 @@ def _expandir_y_cargar_todo_el_libro(libro):
     except Exception:
         pass
 
-    # ← activar killer mientras tocamos el índice
+    # ? activar killer mientras tocamos el índice
     handler = _kill_spurious_popups(libro.context)
     try:
         items = _listar_operaciones_rapido(libro)
@@ -2826,7 +2827,7 @@ def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Pa
 
     nombre = Path(urlparse(url).path).name or destino.name
     host = (urlparse(url).hostname or "").lower()
-    logging.info(f"[DL:START] {nombre} → {destino.name}")
+    logging.info(f"[DL:START] {nombre} ? {destino.name}")
 
     def _stream_to_file(resp):
         with open(destino, "wb") as f:
@@ -2904,7 +2905,7 @@ def _ensure_pdf_fast(path: Path) -> Path:
     if soffice and Path(str(soffice)).exists():
         outdir = path.parent
         dst = path.with_suffix(".pdf")
-        logging.info(f"[CNV:OFF] {path.name} → {dst.name}")
+        logging.info(f"[CNV:OFF] {path.name} ? {dst.name}")
         try:
             subprocess.run(
                 [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(outdir), str(path)],
@@ -3112,7 +3113,7 @@ def _open_sac_desde_portal(page):
 
 def _ir_a_radiografia(sac):
     """
-    Preferir el menú de SAC → “Radiografía”. Si no aparece, usar URL con el mismo /proxy/.
+    Preferir el menú de SAC ? “Radiografía”. Si no aparece, usar URL con el mismo /proxy/.
     """
     import re
 
@@ -3142,7 +3143,7 @@ def _ir_a_radiografia(sac):
     return sac
 
 
-# ─────────────────────── Flujo principal de login ──────────────────────
+# ----------------------- Flujo principal de login ----------------------
 def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass):
     page = context.new_page()
     page.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS", "45000")))
@@ -3391,7 +3392,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
                     logging.info(f"[PRINT:DL] PDF libro guardado: {out.name}")
                     return out
             except Exception:
-                # Si abrió el diálogo del navegador, no habrá download → seguimos al plan B
+                # Si abrió el diálogo del navegador, no habrá download ? seguimos al plan B
                 pass
         except Exception:
             continue
@@ -3569,10 +3570,10 @@ def _convertir_html_a_pdf(html_path: Path, context, p, tmp_dir: Path) -> Path | 
             pass
 
         if out_pdf.exists() and out_pdf.stat().st_size > 1024:
-            logging.info(f"[HTML→PDF] {out_pdf.name}")
+            logging.info(f"[HTML?PDF] {out_pdf.name}")
             return out_pdf
     except Exception as e:
-        logging.info(f"[HTML→PDF:ERR] {e}")
+        logging.info(f"[HTML?PDF:ERR] {e}")
     return None
 
 
@@ -3614,7 +3615,7 @@ def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path
         /* Evitar sólo cortes feos en imágenes/firmas/mesas; permitir flujo normal */
         img, table.signature-block { page-break-inside: avoid; break-inside: avoid; }
         table { page-break-inside: avoid; break-inside: avoid-page; page-break-after: avoid; }
-        /* ↑ mantiene junto el cuadro de 'Protocolo…' con el primer bloque siguiente si hay espacio */
+        /* ? mantiene junto el cuadro de 'Protocolo…' con el primer bloque siguiente si hay espacio */
     """
     html = f"""<!doctype html>
 <html>
@@ -3780,12 +3781,12 @@ def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
     return cleaned
 
 
-# ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
+# ----------------------- DESCARGA PRINCIPAL ----------------------------
 def _env_true(name: str, default="0"):
     return os.getenv(name, default).lower() in ("1", "true", "t", "yes", "y", "si", "sí")
 
 
-# ─────────────────────── DESCARGA PRINCIPAL ────────────────────────────
+# ----------------------- DESCARGA PRINCIPAL ----------------------------
 def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, carpeta_salida):
     SHOW_BROWSER = _env_true("SHOW_BROWSER", "1")
     CHROMIUM_ARGS = ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"]
@@ -3830,7 +3831,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
         try:
             etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
-            # 1) Login → Radiografía
+            # 1) Login ? Radiografía
             sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
             logging.info(f"[SAC] Abierto SAC / Radiografía: url={sac.url}")
 
@@ -3848,7 +3849,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 sac = _ir_a_radiografia(sac)
                 _fill_radiografia_y_buscar(sac, nro_exp)
 
-            # >>> GATE DESDE RADIOGRAFÍA (ESPERAR → PROBAR SI HAY) <<<
+            # >>> GATE DESDE RADIOGRAFÍA (ESPERAR ? PROBAR SI HAY) <<<
             CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
             etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
 
@@ -3868,7 +3869,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             if op_ids_rad:
                 ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
 
-                # 1) Si ALGUNA operación probada muestra el cartel → abortamos TODO
+                # 1) Si ALGUNA operación probada muestra el cartel ? abortamos TODO
                 if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
                     logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
                     messagebox.showwarning(
@@ -3956,8 +3957,8 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 if key in ya_agregados:
                     return
 
-                # ← OCR aquí
-                pth = _maybe_ocr(pth)
+                # ? OCR aquí
+                pth = _maybe_ocr(pth, force=bool(hdr and "ADJUNTO" in (hdr or "").upper()))
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
@@ -4014,12 +4015,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
                 if not visible:
                     logging.info(
-                        f"[OP] {op_id}: contenedor no visible → se omite render de operación (se agregan adjuntos igual)."
+                        f"[OP] {op_id}: contenedor no visible ? se omite render de operación (se agregan adjuntos igual)."
                     )
                     _agregar_adjuntos_de_op(op_id, titulo)
                     continue
 
-                # Render “viejo” por HTML → PDF (NO reemplazado)
+                # Render “viejo” por HTML ? PDF (NO reemplazado)
                 try:
                     pdf_op = _render_operacion_a_pdf_paginas(libro, op_id, context, p, temp_dir)
                 except Exception as e:
@@ -4039,7 +4040,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 # Adjuntos de esta operación
                 _agregar_adjuntos_de_op(op_id, titulo)
 
-            # 7) Fallback del Libro (mantener _imprimir... / _guardar... → _convertir...) si no hubo ninguna operación
+            # 7) Fallback del Libro (mantener _imprimir... / _guardar... ? _convertir...) si no hubo ninguna operación
             if op_pdfs_capturados == 0:
                 logging.info(
                     "[FALLBACK] Ninguna operación pudo renderizarse; intento PDF del Libro."
@@ -4060,7 +4061,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 else:
                     logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
 
-            # 8) Adjuntos sin operación mapeada → al final
+            # 8) Adjuntos sin operación mapeada ? al final
             adj_sin = pdfs_grid.get("__SIN_OP__", [])
             if adj_sin:
                 logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
@@ -4156,7 +4157,7 @@ class ProgressWin(Toplevel):
         self.withdraw()
 
 
-# ───────────────────────── INTERFAZ Tkinter ────────────────────────────
+# ------------------------- INTERFAZ Tkinter ----------------------------
 class App:
     def __init__(self, master):
         master.title("Descargar expediente SAC")
@@ -4249,7 +4250,7 @@ class App:
                 pass
 
 
-# ──────────────────────────── MAIN ─────────────────────────────────────
+# ---------------------------- MAIN -------------------------------------
 LOG = BASE_PATH / "debug.log"
 logging.basicConfig(
     filename=LOG,
@@ -4298,6 +4299,6 @@ def _set_tk_icon(root):
 if __name__ == "__main__":
     _set_win_appusermodelid("SACDownloader.CBA")
     root = Tk()
-    _set_tk_icon(root)  # ⟵ usa icono3.ico desde BASE_PATH (soporta modo frozen)
+    _set_tk_icon(root)  # ? usa icono3.ico desde BASE_PATH (soporta modo frozen)
     App(root)
     root.mainloop()
