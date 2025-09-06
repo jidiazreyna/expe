@@ -22,6 +22,15 @@ from tkinter import Toplevel, ttk
 from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
 import subprocess
+import asyncio
+try:
+    from winrt.windows.media import ocr as winocr
+    from winrt.windows.globalization import Language as WinLanguage
+    from winrt.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
+    from winrt.windows.graphics.imaging import BitmapDecoder
+    _WINOCR_OK = True
+except Exception:
+    _WINOCR_OK = False
 
 # --------------------------- RUTAS Y RECURSOS --------------------------
 if getattr(sys, "frozen", False):  # ejecutable .exe
@@ -40,32 +49,6 @@ from urllib3.util.retry import Retry
 
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
-
-def _has_gs() -> bool:
-    import shutil
-    # en Windows gs suele ser gswin64c.exe; acepto cualquiera
-    return bool(shutil.which("gs") or shutil.which("gswin64c"))
-
-def _has_ocrmypdf() -> bool:
-    import shutil
-    exe = shutil.which("ocrmypdf")
-    # también permito un ocrmypdf.exe embebido al lado (si lo empaquetaras)
-    local_exe = (BASE_PATH / "ocrmypdf.exe")
-    return bool(exe or local_exe.exists())
-
-def _allow_ocrmypdf() -> bool:
-    """
-    Sólo permito ocrmypdf si:
-    - el usuario lo habilitó (OCRMYPDF_ENABLE=1),
-    - NO estamos congelados (o si estás segurísimo, podrías permitirlo),
-    - hay ocrmypdf y Ghostscript presentes.
-    """
-    envar = os.getenv("OCRMYPDF_ENABLE", "0").lower() in ("1","true","t","yes","y","si","sí")
-    if not envar:
-        return False
-    if _is_frozen():
-        return False
-    return _has_ocrmypdf() and _has_gs()
 
 # --------- Seguridad/Permisos ---------
 PERM_MSG = "El usuario no tiene los permisos suficientes para visualizar este contenido."
@@ -1281,64 +1264,6 @@ def fusionar_pdfs(lista, destino: Path):
         w.write(f)
 
 
-# ----------- OCR helpers (sin dependencia de PyMuPDF) -----------
-try:
-    import pypdfium2 as pdfium
-except Exception:
-    pdfium = None
-
-try:
-    import pytesseract
-except Exception:
-    pytesseract = None
-
-
-def _find_tesseract_cmd() -> str | None:
-    import shutil
-
-    cand = [
-        os.getenv("TESSERACT_CMD", "").strip() or None,
-        str(BASE_PATH / "tesseract" / "tesseract.exe"),
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        shutil.which("tesseract"),
-    ]
-    for c in cand:
-        if c and Path(c).exists():
-            return c
-    return None
-
-
-# Estructura esperada del tesseract portátil:
-# tesseract/
-#   tesseract.exe
-#   *.dll
-#   tessdata/
-#       spa.traineddata
-#       eng.traineddata
-def _prepare_tesseract_env() -> bool:
-    try:
-        import pytesseract
-    except Exception:
-        return False
-    cmd = (BASE_PATH / "tesseract" / "tesseract.exe")
-    if not cmd.exists():
-        return False
-    pytesseract.pytesseract.tesseract_cmd = str(cmd)
-    os.environ.setdefault("TESSDATA_PREFIX", str(cmd.parent / "tessdata"))
-    # Verificar idiomas spa/eng disponibles
-    try:
-        import subprocess
-        out = subprocess.run([str(cmd), "--list-langs"], capture_output=True, text=True, check=True)
-        langs_avail = {l.strip().lower() for l in (out.stdout or "").splitlines()}
-        need = {"eng", "spa"}
-        if not need.issubset(langs_avail):
-            logging.info(f"[OCR:TESS] Missing langs. Available={sorted(langs_avail)} need={sorted(need)}")
-            return False
-    except Exception as e:
-        logging.info(f"[OCR:TESS] Can't verify langs: {e}")
-    return True
-
-
 def _pdf_char_count(path: Path, paginas: int = 3) -> int:
     """
     Cuenta caracteres de texto en las primeras `paginas` del PDF.
@@ -1391,206 +1316,125 @@ def _has_enough_text(path: Path, paginas: int = 3) -> bool:
             return False
 
 
-def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
-    """
-    Usa ocrmypdf SOLO si está permitido y con Ghostscript disponible.
-    En caso contrario, vuelve False sin intentar nada (así cae al pipeline portátil).
-    """
-    import shutil, subprocess, os
+async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
+    stream = InMemoryRandomAccessStream()
+    writer = DataWriter(stream)
+    writer.write_bytes(png_bytes)
+    await writer.store_async()
+    stream.seek(0)
 
-    if not _allow_ocrmypdf():
+    decoder = await BitmapDecoder.create_async(stream)
+    sbmp = await decoder.get_software_bitmap_async()
+
+    engine = winocr.OcrEngine.try_create_from_language(WinLanguage(lang_tag))
+    if engine is None:
+        engine = winocr.OcrEngine.try_create_from_user_profile_languages()
+    if engine is None:
+        raise RuntimeError("Motor WinOCR no disponible (falta paquete de idioma en Windows).")
+
+    result = await engine.recognize_async(sbmp)
+    return result
+
+
+def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
+    if not _WINOCR_OK:
+        logging.info("[WINOCR] Paquete winrt no disponible.")
         return False
 
-    exe = shutil.which("ocrmypdf") or str(BASE_PATH / "ocrmypdf.exe")
-    if not exe or (not Path(exe).exists()):
-        return False
-    if not _has_gs():
-        return False
-    logging.info(f"[OCR:OCRMYPDF] exe={exe} gs_ok={_has_gs()} force={force} langs={langs}")
-    # Preparar entorno para tesseract embebido (si lo tenés en ./tesseract/)
-    cmd = _find_tesseract_cmd()
-    env = os.environ.copy()
-    if cmd:
-        tdir = str(Path(cmd).parent)
-        env["PATH"] = tdir + os.pathsep + env.get("PATH","")
-        env.setdefault("TESSDATA_PREFIX", str(Path(cmd).parent / "tessdata"))
-
-    args = [
-        "--optimize", "1",
-        "--fast-web-view", "1",
-        "--rotate-pages",
-        "--deskew",
-        "-l", langs,
-    ]
-    args.insert(0, "--force-ocr" if force else "--skip-text")
+    import fitz  # PyMuPDF
+    if not lang_tags:
+        lang_tags = (os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+"))
 
     try:
-        subprocess.run([exe, *args, str(src), str(dst)],
-                       check=True,
-                       stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL,
-                       env=env)
+        src = fitz.open(str(pdf_in))
+    except Exception as e:
+        logging.info(f"[WINOCR] No pude abrir PDF origen: {e}")
+        return False
+
+    out = fitz.open()
+    try:
+        for i in range(src.page_count):
+            pg = src[i]
+            pix = pg.get_pixmap(dpi=dpi, alpha=False)
+            png_bytes = pix.tobytes("png")
+            page_w, page_h = pg.rect.width, pg.rect.height
+            img_w, img_h = pix.width, pix.height
+            sx, sy = page_w / img_w, page_h / img_h
+
+            ocr_result = None
+            for tag in lang_tags:
+                try:
+                    ocr_result = asyncio.run(_winocr_recognize_png(png_bytes, tag.strip()))
+                    if ocr_result and ocr_result.text:
+                        break
+                except Exception as e:
+                    logging.info(f"[WINOCR] Intento con {tag} falló: {e}")
+                    continue
+
+            newp = out.new_page(width=page_w, height=page_h)
+            newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes)
+
+            if ocr_result and ocr_result.lines:
+                for line in ocr_result.lines:
+                    for word in line.words:
+                        r = word.bounding_rect
+                        x0, y0 = r.x * sx, r.y * sy
+                        x1, y1 = (r.x + r.width) * sx, (r.y + r.height) * sy
+                        rect = fitz.Rect(x0, y0, x1, y1)
+                        fontsize = max(4, (y1 - y0) * 0.9)
+                        try:
+                            newp.insert_textbox(rect, word.text or "", fontsize=fontsize, render_mode=3)
+                        except Exception:
+                            newp.insert_text((x0, y1), word.text or "", fontsize=fontsize, render_mode=3)
+
+        out.save(str(dst), deflate=True, garbage=3)
         return dst.exists() and dst.stat().st_size > 1024
     except Exception as e:
-        if hasattr(e, "stderr"):
-            logging.info(f"[OCR:OCRMYPDF:ERR] {(e.stderr or b'').decode('utf-8', 'ignore')[:800]}")
-        logging.info(f"[OCR:OCRMYPDF:EXC] {e}")
-    except Exception:
+        logging.info(f"[WINOCR] Error procesando PDF: {e}")
         return False
-
-
-
-
-def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=600) -> bool:
-    if pdfium is None:
-        logging.info("[OCR:TESS] pypdfium2 MISSING")
-        return False
-    try:
-        import pytesseract
-        from PIL import ImageOps, ImageFilter
-        from tempfile import NamedTemporaryFile
-    except Exception:
-        logging.info("[OCR:TESS] pytesseract/PIL MISSING")
-        return False
-
-    if not _prepare_tesseract_env():
-        logging.info("[OCR:TESS] Embedded tesseract missing or not ready")
-        return False
-
-    merger = PdfMerger()
-    tmp_paths: list[Path] = []
-    try:
-        doc = pdfium.PdfDocument(str(pdf_in))
-        scale = dpi / 72.0
-        for i in range(len(doc)):
-            pil = doc[i].render(scale=scale).to_pil().convert("L")
-            pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
-            cfg = f"--psm 6 --oem 1 -c preserve_interword_spaces=1 -c user_defined_dpi={dpi}"
-
-            # Tesseract necesita archivos reales de entrada/salida. Genero ambos y
-            # utilizo run_tesseract para forzar la creación del PDF de salida.
-            with NamedTemporaryFile(delete=False, suffix=".png", dir=str(dst.parent)) as img_tmp:
-                pil.save(img_tmp, format="PNG")
-                img_path = Path(img_tmp.name)
-            with NamedTemporaryFile(delete=False, dir=str(dst.parent)) as out_tmp:
-                out_base = Path(out_tmp.name)
-
-            try:
-                pytesseract.run_tesseract(
-                    str(img_path),
-                    str(out_base),
-                    lang=langs,
-                    config=cfg,
-                    extension="pdf",
-                )
-                page_pdf = out_base.with_suffix(".pdf")
-                tmp_paths.append(page_pdf)
-                merger.append(str(page_pdf))
-            finally:
-                try:
-                    img_path.unlink()
-                except Exception:
-                    pass
-
-        with open(dst, "wb") as f:
-            merger.write(f)
-        merger.close()
-
-        for t in tmp_paths:
-            try:
-                t.unlink()
-            except Exception:
-                pass
-
-        return dst.exists() and dst.stat().st_size > 1024
-    except Exception as ex:
+    finally:
         try:
-            merger.close()
+            src.close()
         except Exception:
             pass
-        for t in tmp_paths:
-            try:
-                t.unlink()
-            except Exception:
-                pass
-        logging.info(f"[OCR:TESS:EXC] {ex}")
-        return False
-
+        try:
+            out.close()
+        except Exception:
+            pass
 
 
 def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     """
-    Devuelve un PDF con capa de texto.
-    Lógica:
-      - OCR_MODE=off    -> nunca
-      - OCR_MODE=force  -> siempre
-      - OCR_MODE=auto   -> sólo si detecta poco texto
-    Implementación:
-      - Si _allow_ocrmypdf() => intento con ocrmypdf.
-      - Si no, o si falla => pipeline portátil (pdfium+tesseract) SIN depender de Ghostscript.
+    OCR con Windows WinRT.
+    - OCR_MODE=off   -> nunca
+    - OCR_MODE=force -> siempre
+    - OCR_MODE=auto  -> solo si detecta poco texto (_has_enough_text)
+    - WINOCR_LANGS="es-AR+es-ES+en-US"
+    - OCR_DPI=300 (por default)
     """
-    mode = (os.getenv("OCR_MODE", "") or "").lower() or ("force" if _is_frozen() else "auto")
-    langs = os.getenv("OCR_LANGS", "spa+eng")
-    dpi = int(os.getenv("OCR_DPI", "600"))
-    sample_pages = int(os.getenv("OCR_SAMPLE_PAGES", "3"))
-
-    logging.info(f"[OCR] check · {pdf_in.name}")
-
+    mode = (os.getenv("OCR_MODE", "") or "").lower() or "auto"
     if mode == "off":
-        logging.info("[OCR] OFF ? salto OCR")
         return pdf_in
 
-    # ¿tiene suficiente texto?
-    need_ocr = not _has_enough_text(pdf_in, paginas=sample_pages)
-    do_force = force or (mode == "force")
-    logging.info(f"[OCR:NEED] need_ocr={need_ocr} do_force={do_force} sample_pages={sample_pages}")
-
-
-    logging.info(f"[OCR:ALLOW] allow_ocrmypdf={_allow_ocrmypdf()} has_ocrmypdf={_has_ocrmypdf()} has_gs={_has_gs()}")
-
-    dst = pdf_in.with_suffix(".ocr.pdf")
-
-    # preflight
-    def _ocr_preflight_log():
+    need_ocr = force or (mode == "force")
+    if (mode == "auto") and not need_ocr:
         try:
-            from shutil import which
+            need_ocr = not _has_enough_text(pdf_in, paginas=int(os.getenv("OCR_SAMPLE_PAGES", "3")))
         except Exception:
-            from shutil import which
-        ocrmypdf_ok = _has_ocrmypdf()
-        gs_ok = _has_gs()
-        embedded = BASE_PATH / "tesseract" / "tesseract.exe"
-        tesseract_path = str(embedded) if embedded.exists() else _find_tesseract_cmd()
-        logging.info(
-            f"[OCR:CFG] mode={mode} langs={langs} dpi={dpi}"
-        )
-        logging.info(
-            f"[OCR:STA] ocrmypdf={'OK' if ocrmypdf_ok else 'OFF'} | "
-            f"gs={'OK' if gs_ok else 'MISSING'} | "
-            f"tesseract={'OK:'+tesseract_path if tesseract_path and Path(tesseract_path).exists() else 'MISSING'} | "
-            f"pdfium={'OK' if pdfium else 'MISSING'} | pytesseract={'OK' if pytesseract else 'MISSING'}"
-        )
-    _ocr_preflight_log()
+            need_ocr = True
 
-    ok = False
+    if not need_ocr:
+        logging.info("[WINOCR] AUTO: suficiente texto; salto OCR")
+        return pdf_in
 
-    # 1) ocrmypdf si (y sólo si) está permitido y completo
-    if _allow_ocrmypdf():
-        logging.info("[OCR:TRY] ocrmypdf")
-        ok = _ocr_con_ocrmypdf(pdf_in, dst, langs, force=do_force)
-        logging.info(f"[OCR:RES] ocrmypdf ok={ok}")
-
-    # 2) Fallback SIEMPRE disponible en el .exe
-    if not ok and (need_ocr or do_force):
-        logging.info("[OCR:TRY] pdfium+tesseract (fallback)")
-        ok = _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi)  # <- ahora devuelve True/False
-        logging.info(f"[OCR:RES] fallback ok={ok}")
-
+    out = pdf_in.with_suffix(".ocr.pdf")
+    langs = (os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+"))
+    ok = _apply_winocr_to_pdf(pdf_in, out, langs, dpi=int(os.getenv("OCR_DPI", "300")))
     if ok:
-        logging.info(f"[OCR] {'FORCE' if do_force else 'AUTO'} -> {dst.name}")
-        return dst
-    
+        logging.info(f"[WINOCR] OK -> {out.name}")
+        return out
 
-    logging.info(f"[OCR] SKIP/FAIL -> uso original: {pdf_in.name}")
+    logging.info("[WINOCR] Falla/No disponible -> uso original")
     return pdf_in
 
 
@@ -3780,7 +3624,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
         temp_dir.mkdir(parents=True, exist_ok=True)
     else:
         temp_dir = Path(tempfile.mkdtemp())
-    os.environ.setdefault("TESSERACT_TMPDIR", str(temp_dir))
     os.environ.setdefault("TMP", str(temp_dir))
     os.environ.setdefault("TEMP", str(temp_dir))
 
