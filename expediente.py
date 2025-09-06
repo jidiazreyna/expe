@@ -1467,19 +1467,35 @@ def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=60
             pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
             cfg = f"--psm 6 --oem 1 -c preserve_interword_spaces=1 -c user_defined_dpi={dpi}"
 
-            pdf_bytes = pytesseract.image_to_pdf_or_hocr(pil, extension="pdf", lang=langs, config=cfg)
+            # Tesseract necesita archivos reales de entrada/salida. Genero ambos y
+            # utilizo run_tesseract para forzar la creación del PDF de salida.
+            with NamedTemporaryFile(delete=False, suffix=".png", dir=str(dst.parent)) as img_tmp:
+                pil.save(img_tmp, format="PNG")
+                img_path = Path(img_tmp.name)
+            with NamedTemporaryFile(delete=False, dir=str(dst.parent)) as out_tmp:
+                out_base = Path(out_tmp.name)
 
-            # Guardar cada página OCR como archivo temporal REAL y anexarlo
-            with NamedTemporaryFile(delete=False, suffix=".pdf", dir=str(dst.parent)) as _tmp:
-                _tmp.write(pdf_bytes)
-                tmp_paths.append(Path(_tmp.name))
-            merger.append(str(tmp_paths[-1]))
+            try:
+                pytesseract.run_tesseract(
+                    str(img_path),
+                    str(out_base),
+                    lang=langs,
+                    config=cfg,
+                    extension="pdf",
+                )
+                page_pdf = out_base.with_suffix(".pdf")
+                tmp_paths.append(page_pdf)
+                merger.append(str(page_pdf))
+            finally:
+                try:
+                    img_path.unlink()
+                except Exception:
+                    pass
 
         with open(dst, "wb") as f:
             merger.write(f)
         merger.close()
 
-        # Limpieza de temporales
         for t in tmp_paths:
             try:
                 t.unlink()
@@ -1492,7 +1508,6 @@ def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=60
             merger.close()
         except Exception:
             pass
-        # Limpieza en error
         for t in tmp_paths:
             try:
                 t.unlink()
