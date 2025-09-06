@@ -23,14 +23,35 @@ from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
 import subprocess
 import asyncio
+# --- OCR WinRT: compatibilidad winsdk (Py 3.12+) y winrt (Py 3.8–3.11)
+# --- OCR WinRT (Windows) -----------------------------------------------
 try:
-    from winrt.windows.media import ocr as winocr
-    from winrt.windows.globalization import Language as WinLanguage
-    from winrt.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
-    from winrt.windows.graphics.imaging import BitmapDecoder
+    from winsdk.windows.media import ocr as winocr
+    from winsdk.windows.globalization import Language as WinLanguage
+    from winsdk.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
+    from winsdk.windows.graphics.imaging import BitmapDecoder
     _WINOCR_OK = True
 except Exception:
     _WINOCR_OK = False
+import threading
+
+def _run_ocr_sync(png_bytes: bytes, lang_tag: str):
+    """
+    Ejecuta la coroutina _winocr_recognize_png en un hilo con su propio event loop,
+    evitando el error 'coroutine was never awaited' o 'asyncio.run()...' si ya hay un loop corriendo.
+    """
+    out = {"val": None, "err": None}
+    def _worker():
+        try:
+            out["val"] = asyncio.run(_winocr_recognize_png(png_bytes, lang_tag))
+        except Exception as e:
+            out["err"] = e
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join()
+    if out["err"]:
+        raise out["err"]
+    return out["val"]
 
 # --------------------------- RUTAS Y RECURSOS --------------------------
 if getattr(sys, "frozen", False):  # ejecutable .exe
@@ -1364,8 +1385,8 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             ocr_result = None
             for tag in lang_tags:
                 try:
-                    ocr_result = asyncio.run(_winocr_recognize_png(png_bytes, tag.strip()))
-                    if ocr_result and ocr_result.text:
+                    ocr_result = _run_ocr_sync(png_bytes, tag.strip())
+                    if ocr_result and getattr(ocr_result, "text", None):
                         break
                 except Exception as e:
                     logging.info(f"[WINOCR] Intento con {tag} falló: {e}")
