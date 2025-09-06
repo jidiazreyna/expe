@@ -19,4 +19,4 @@ pyinstaller --noconfirm --onefile expediente.py ^
 
 ## Variables de entorno
 
-- `OCR_FINAL_FORCE`: si se establece en `1`/`true`, ejecuta un OCR final sobre el PDF generado usando `ocrmypdf` (300 DPI, `--deskew`, `--rotate-pages`).
+- `OCR_FINAL_FORCE`: si se establece en `1`/`true`, ejecuta un OCR final sobre el PDF generado usando `ocrmypdf` (300 DPI, `--force-ocr`, `--language spa`, `--deskew`, `--rotate-pages`, `--optimize 3`).
