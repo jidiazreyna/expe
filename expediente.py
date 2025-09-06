@@ -1337,6 +1337,31 @@ def _has_enough_text(path: Path, paginas: int = 3) -> bool:
             return False
 
 
+def _page_has_text(pg, min_chars: int = 50) -> bool:
+    try:
+        # Count text only in the page body (ignore header/footer and side margins).
+        r = pg.rect
+        top = r.height * 0.15
+        bottom = r.height * 0.85
+        left = r.width * 0.06
+        right = r.width * 0.94
+        total = 0
+        for x0, y0, x1, y1, txt, *_ in (pg.get_text("blocks") or []):
+            if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
+                continue
+            t = (txt or "").strip()
+            if len(t) < 8:
+                continue
+            total += len(t)
+        return total >= min_chars
+    except Exception:
+        try:
+            t = (pg.get_text("text") or "").strip()
+            return len(t) >= (min_chars * 2)
+        except Exception:
+            return False
+
+
 async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
     stream = InMemoryRandomAccessStream()
     writer = DataWriter(stream)
@@ -1457,7 +1482,7 @@ def convertir_pdf_a_imagenes(
 
 def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
     if not _WINOCR_OK:
-        logging.info("[WINOCR] Paquete winrt no disponible.")
+        logging.info("[WINOCR] Paquete winsdk/winrt no disponible.")
         return False
 
     import fitz  # PyMuPDF
@@ -1476,6 +1501,41 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
             for i, img in enumerate(imgs):
                 pg = src[i]
+                try:
+                    if _page_has_text(pg):
+                        out.insert_pdf(src, from_page=i, to_page=i)
+                        continue
+                except Exception:
+                    pass
+                dbg = bool(int(os.getenv("OCR_DEBUG", "0")))
+                # Compute body text chars and header words to decide preservation/OCR
+                try:
+                    r = pg.rect
+                    top = r.height * 0.15; bottom = r.height * 0.85; left = r.width * 0.06; right = r.width * 0.94
+                    body_chars = 0
+                    for x0,y0,x1,y1,txt,*_ in (pg.get_text("blocks") or []):
+                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
+                            continue
+                        t = (txt or "").strip()
+                        if len(t) < 8: continue
+                        body_chars += len(t)
+                    header_words = []
+                    for x0,y0,x1,y1,w,*_ in (pg.get_text("words") or []):
+                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
+                            header_words.append((x0,y0,x1,y1,w))
+                    header_text = (" ").join([w for _,_,_,_,w in header_words])
+                except Exception:
+                    body_chars = 0; header_words = []; header_text = ""
+                force_adj = (os.getenv("OCR_FORCE_ADJUNTOS", "0").lower() in ("1", "true", "yes"))
+                has_adj = ("ADJUNTO" in (header_text or "").upper())
+                preserve = (body_chars >= int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))) and (not (force_adj or has_adj))
+                if dbg:
+                    logging.info(f"[WINOCR:DBG] page={i+1} body_chars={body_chars} header_has_ADJUNTO={has_adj} preserve={preserve}")
+                if preserve:
+                    out.insert_pdf(src, from_page=i, to_page=i)
+                    continue
+
+
                 pix = fitz.Pixmap(img)
                 png_bytes = pix.tobytes("png")
                 page_w, page_h = pg.rect.width, pg.rect.height
@@ -1483,34 +1543,128 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                 sx, sy = page_w / img_w, page_h / img_h
 
                 ocr_result = None
-                for tag in lang_tags:
-                    try:
-                        ocr_result = _run_ocr_sync(png_bytes, tag.strip())
-                        if ocr_result and getattr(ocr_result, "text", None):
-                            break
-                    except Exception as e:
-                        logging.info(f"[WINOCR] Intento con {tag} falló: {e}")
-                        continue
+                best = None; best_wc = -1; best_deg = 0; best_bytes = png_bytes
+                visible_dbg = bool(int(os.getenv("OCR_VISIBLE_DEBUG", "0")))
+                # Preprocess + rotations only when page lacks body text or header has ADJUNTO
+                do_heavy = (body_chars < int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))) or has_adj
+                rots = [int(x) for x in (os.getenv("OCR_ROTATIONS", "0,90,270").split(',')) if x.strip().isdigit()] if do_heavy else [0]
+                try:
+                    from PIL import Image, ImageOps, ImageFilter
+                    import io as _io
+                    def _prep(b, deg):
+                        im = Image.open(_io.BytesIO(b)).convert('RGB')
+                        scale = float(os.getenv('OCR_SCALE', '2.0'))
+                        w,h = im.size; im = im.resize((int(w*scale), int(h*scale)));
+                        # cap max dimension to 5000 px to avoid WinRT errors
+                        mw = 5000; mh = 5000; w2,h2 = im.size;
+                        if w2>mw or h2>mh:
+                            r = min(mw/float(w2), mh/float(h2)); im = im.resize((int(w2*r), int(h2*r)))
+                        im = ImageOps.autocontrast(im)
+                        im = im.filter(ImageFilter.UnsharpMask(radius=1.0, percent=120, threshold=3))
+                        if deg:
+                            im = im.rotate(deg, expand=True)
+                        outb = _io.BytesIO(); im.save(outb, format='PNG'); return outb.getvalue()
+                except Exception:
+                    _prep = None
+                for deg in rots:
+                    for tag in lang_tags:
+                        try:
+                            data = _prep(png_bytes, deg) if _prep else png_bytes
+                            res = _run_ocr_sync(data, tag.strip())
+                            wc = 0
+                            if res and getattr(res, 'lines', None):
+                                try:
+                                    wc = sum(len(ln.words) for ln in res.lines)
+                                except Exception:
+                                    wc = 0
+                            if res and getattr(res, 'text', None) and wc > best_wc:
+                                best, best_wc, best_deg, ocr_result, best_bytes = res, wc, deg, res, data
+                        except Exception as e:
+                            logging.info(f"[WINOCR] Intento con {tag} deg={deg} falló: {e}")
+                            continue
+                if bool(int(os.getenv('OCR_DEBUG','0'))):
+                    logging.info(f"[WINOCR:DBG] page={i+1} best_deg={best_deg} best_wc={best_wc}")
 
-                newp = out.new_page(width=page_w, height=page_h)
-                newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes)
+                # Use the image bytes that produced the best OCR for drawing and scaling
+                draw_bytes = best_bytes if (best_bytes is not None) else png_bytes
+                try:
+                    from PIL import Image as _Image
+                    import io as _io
+                    _imtmp = _Image.open(_io.BytesIO(draw_bytes))
+                    img_w, img_h = _imtmp.size
+                except Exception:
+                    img_w, img_h = pix.width, pix.height
+                sx, sy = page_w / img_w, page_h / img_h
 
+                out.insert_pdf(src, from_page=i, to_page=i)
+                newp = out[-1]
+                newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=draw_bytes)
                 if ocr_result and ocr_result.lines:
+                    if bool(int(os.getenv("OCR_DEBUG", "0"))):
+                        try:
+                            wc = sum(len(line.words) for line in ocr_result.lines)
+                        except Exception:
+                            wc = 0
+                        logging.info(f"[WINOCR:DBG] page={i+1} ocr_lines={len(ocr_result.lines)} ocr_words={wc}")
                     for line in ocr_result.lines:
                         for word in line.words:
                             r = word.bounding_rect
-                            x0, y0 = r.x * sx, r.y * sy
-                            x1, y1 = (r.x + r.width) * sx, (r.y + r.height) * sy
+                            x0 = r.x * sx
+                            x1 = (r.x + r.width) * sx
+                            y0 = page_h - ((r.y + r.height) * sy)   # top-left -> bottom-left
+                            y1 = page_h - (r.y * sy)
+
+                            # 1) Clamp a la página y tamaño mínimo
+                            def _clamp(v, lo, hi): return lo if v < lo else (hi if v > hi else v)
+                            x0 = _clamp(x0, 0, page_w - 0.5)
+                            x1 = _clamp(max(x1, x0 + 0.5), 0.5, page_w)
+                            y0 = _clamp(y0, 0, page_h - 0.5)
+                            y1 = _clamp(max(y1, y0 + 0.5), 0.5, page_h)
+
+                            rect = fitz.Rect(x0, y0, x1, y1)
+
+                            # 2) Tamaño de fuente razonable: no microscópico ni gigante
+                            h = max( y1 - y0, 1.0 )
+                            fontsize = max(6, min(h * 0.9, 36))
+
+                            # 3) Intentar textbox; si no queda nada, caer a insert_text
+                            try:
+                                # Nota: muchas versiones devuelven 0 si no se pudo ubicar texto
+                                rc = newp.insert_textbox(
+                                    rect, word.text or "",
+                                    fontsize=fontsize, fontname="helv",
+                                    render_mode=(0 if visible_dbg else 3)
+                                )
+                                if not rc:  # 0 / None / False -> no se insertó
+                                    newp.insert_text(
+                                        (x0, y1), word.text or "",
+                                        fontsize=fontsize, fontname="helv",
+                                        render_mode=(0 if visible_dbg else 3)
+                                    )
+                            except Exception:
+                                newp.insert_text(
+                                    (x0, y1), word.text or "",
+                                    fontsize=fontsize, fontname="helv",
+                                    render_mode=(0 if visible_dbg else 3)
+                                )
+                # Reinstate header/footer words as invisible text to keep acápite selectable
+                header_words_inserted = 0
+                try:
+                    r = pg.rect
+                    top = r.height * 0.15; bottom = r.height * 0.85; left = r.width * 0.06; right = r.width * 0.94
+                    for x0, y0, x1, y1, w, *rest in (pg.get_text("words") or []):
+                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
                             rect = fitz.Rect(x0, y0, x1, y1)
                             fontsize = max(4, (y1 - y0) * 0.9)
                             try:
-                                newp.insert_textbox(
-                                    rect, word.text or "", fontsize=fontsize, render_mode=3
-                                )
+                                newp.insert_textbox(rect, w or "", fontsize=fontsize, render_mode=3)
                             except Exception:
-                                newp.insert_text(
-                                    (x0, y1), word.text or "", fontsize=fontsize, render_mode=3
-                                )
+                                newp.insert_text((x0, y1), w or "", fontsize=fontsize, render_mode=3)
+                            header_words_inserted += 1
+                except Exception:
+                    pass
+                if bool(int(os.getenv("OCR_DEBUG", "0"))):
+                    logging.info(f"[WINOCR:DBG] page={i+1} header_words_inserted={header_words_inserted}")
 
         out.save(str(dst), deflate=True, garbage=3)
         return dst.exists() and dst.stat().st_size > 1024
@@ -1528,6 +1682,8 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             pass
 
 
+
+
 def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     """
     OCR con Windows WinRT.
@@ -1543,10 +1699,30 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
 
     need_ocr = force or (mode == "force")
     if (mode == "auto") and not need_ocr:
+        # Page-level scan ignoring headers; trigger OCR if any page lacks body text
         try:
-            need_ocr = not _has_enough_text(pdf_in, paginas=int(os.getenv("OCR_SAMPLE_PAGES", "3")))
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(pdf_in))
+            need_ocr = False
+            limit = min(doc.page_count, max(1, int(os.getenv("OCR_SCAN_MAX_PAGES", "200"))))
+            min_chars = int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))
+            for i in range(limit):
+                try:
+                    if not _page_has_text(doc[i], min_chars=min_chars):
+                        need_ocr = True
+                        break
+                except Exception:
+                    # Be conservative if analysis fails
+                    need_ocr = True
+                    break
+            doc.close()
         except Exception:
-            need_ocr = True
+            # Fallback coarse check (sample more pages)
+            try:
+                need_ocr = not _has_enough_text(pdf_in, paginas=int(os.getenv("OCR_SAMPLE_PAGES", "10")))
+            except Exception:
+                need_ocr = True
+
 
     if not need_ocr:
         logging.info("[WINOCR] AUTO: suficiente texto; salto OCR")
@@ -1554,7 +1730,7 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
 
     out = pdf_in.with_suffix(".ocr.pdf")
     langs = (os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+"))
-    ok = _apply_winocr_to_pdf(pdf_in, out, langs, dpi=int(os.getenv("OCR_DPI", "300")))
+    ok = _apply_winocr_to_pdf(pdf_in, out, langs, dpi=int(os.getenv("OCR_DPI", "450")))
     if ok:
         logging.info(f"[WINOCR] OK -> {out.name}")
         return out
@@ -4289,3 +4465,14 @@ if __name__ == "__main__":
     App(root)
     root.mainloop()
 # Nota: Al ejecutar con OCR_MODE=force, los adjuntos siempre salen con capa de texto.
+
+
+
+
+
+
+
+
+
+
+
