@@ -1325,6 +1325,17 @@ def _prepare_tesseract_env() -> bool:
         return False
     pytesseract.pytesseract.tesseract_cmd = str(cmd)
     os.environ.setdefault("TESSDATA_PREFIX", str(cmd.parent / "tessdata"))
+    # Verificar idiomas spa/eng disponibles
+    try:
+        import subprocess
+        out = subprocess.run([str(cmd), "--list-langs"], capture_output=True, text=True, check=True)
+        langs_avail = {l.strip().lower() for l in (out.stdout or "").splitlines()}
+        need = {"eng", "spa"}
+        if not need.issubset(langs_avail):
+            logging.info(f"[OCR:TESS] Missing langs. Available={sorted(langs_avail)} need={sorted(need)}")
+            return False
+    except Exception as e:
+        logging.info(f"[OCR:TESS] Can't verify langs: {e}")
     return True
 
 
@@ -1437,16 +1448,17 @@ def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=60
     try:
         import pytesseract
         from PIL import ImageOps, ImageFilter
-        from io import BytesIO
+        from tempfile import NamedTemporaryFile
     except Exception:
         logging.info("[OCR:TESS] pytesseract/PIL MISSING")
         return False
 
     if not _prepare_tesseract_env():
-        logging.info("[OCR:TESS] Embedded tesseract missing")
+        logging.info("[OCR:TESS] Embedded tesseract missing or not ready")
         return False
 
     merger = PdfMerger()
+    tmp_paths: list[Path] = []
     try:
         doc = pdfium.PdfDocument(str(pdf_in))
         scale = dpi / 72.0
@@ -1454,18 +1466,38 @@ def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=60
             pil = doc[i].render(scale=scale).to_pil().convert("L")
             pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
             cfg = f"--psm 6 --oem 1 -c preserve_interword_spaces=1 -c user_defined_dpi={dpi}"
+
             pdf_bytes = pytesseract.image_to_pdf_or_hocr(pil, extension="pdf", lang=langs, config=cfg)
-            merger.append(BytesIO(pdf_bytes))
+
+            # Guardar cada página OCR como archivo temporal REAL y anexarlo
+            with NamedTemporaryFile(delete=False, suffix=".pdf", dir=str(dst.parent)) as _tmp:
+                _tmp.write(pdf_bytes)
+                tmp_paths.append(Path(_tmp.name))
+            merger.append(str(tmp_paths[-1]))
 
         with open(dst, "wb") as f:
             merger.write(f)
         merger.close()
+
+        # Limpieza de temporales
+        for t in tmp_paths:
+            try:
+                t.unlink()
+            except Exception:
+                pass
+
         return dst.exists() and dst.stat().st_size > 1024
     except Exception as ex:
         try:
             merger.close()
-        except:
+        except Exception:
             pass
+        # Limpieza en error
+        for t in tmp_paths:
+            try:
+                t.unlink()
+            except Exception:
+                pass
         logging.info(f"[OCR:TESS:EXC] {ex}")
         return False
 
@@ -3733,6 +3765,9 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
         temp_dir.mkdir(parents=True, exist_ok=True)
     else:
         temp_dir = Path(tempfile.mkdtemp())
+    os.environ.setdefault("TESSERACT_TMPDIR", str(temp_dir))
+    os.environ.setdefault("TMP", str(temp_dir))
+    os.environ.setdefault("TEMP", str(temp_dir))
 
     def _mf(line: str):
         logging.info(line)
@@ -3855,10 +3890,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             try:
                 caratula_pdf = _render_caratula_a_pdf(libro, context, p, temp_dir)
                 if caratula_pdf and caratula_pdf.exists():
-                    try:
-                        caratula_pdf = _pdf_sin_blancos(caratula_pdf)
-                    except Exception:
-                        pass
                     _mf(f"CARATULA · {caratula_pdf.name}")
                     bloques.append((caratula_pdf, None))
                     logging.info("[CARATULA] agregada al inicio")
@@ -3924,8 +3955,8 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · {titulo} · {pth.name}")
                     hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    # OCR SIEMPRE para adjuntos
-                    pth_ocr = _maybe_ocr(pth, force=True)
+                    force_ocr = _env_true("OCR_ADJUNTOS_FORCE", "1")  # por defecto se fuerza como hoy
+                    pth_ocr = _maybe_ocr(pth, force=force_ocr)
                     if isinstance(pth_ocr, Path) and pth_ocr.exists():
                         pth = pth_ocr
 
@@ -4023,8 +4054,8 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · (sin operación) · {pth.name}")
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
-                    # OCR SIEMPRE para adjuntos (sin operación)
-                    pth_ocr = _maybe_ocr(pth, force=True)
+                    force_ocr = _env_true("OCR_ADJUNTOS_FORCE", "1")  # por defecto se fuerza como hoy
+                    pth_ocr = _maybe_ocr(pth, force=force_ocr)
                     if isinstance(pth_ocr, Path) and pth_ocr.exists():
                         pth = pth_ocr
 
