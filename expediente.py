@@ -1357,6 +1357,104 @@ async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
     return result
 
 
+def convertir_pdf_a_imagenes(
+    pdf_path: str | Path, out_dir: str | Path, formato: str = "png", dpi: int = 300
+) -> list[str]:
+    """Convierte cada página de un PDF en un archivo de imagen independiente.
+
+    Se intentará usar ``pdfimages`` (Poppler) si está disponible en el sistema.
+    Si no se encuentra, se probará ``pdftoppm``. Como último recurso, se
+    utilizará `PyMuPDF <https://pymupdf.readthedocs.io/>`_ (``fitz``).
+
+    Los archivos resultantes se nombran ``page_001.png``, ``page_002.png``,
+    etc. y se guardan en ``out_dir``.
+
+    Parameters
+    ----------
+    pdf_path:
+        Ruta al archivo PDF de origen.
+    out_dir:
+        Directorio donde se guardarán las imágenes.
+    formato:
+        Formato de salida: ``"png"`` (por defecto) o ``"tiff"``.
+    dpi:
+        Resolución para el renderizado cuando se utiliza PyMuPDF o ``pdftoppm``.
+
+    Returns
+    -------
+    list[str]
+        Lista con las rutas de las imágenes generadas.
+
+    Raises
+    ------
+    FileNotFoundError
+        Si ``pdf_path`` no existe.
+    ValueError
+        Si ``formato`` no es ``"png"`` ni ``"tiff"``.
+    RuntimeError
+        Si no hay herramientas disponibles para realizar la conversión.
+    """
+
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"Archivo PDF no encontrado: {pdf_path}")
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    formato = formato.lower()
+    if formato not in {"png", "tiff"}:
+        raise ValueError("formato debe ser 'png' o 'tiff'")
+
+    tmp_base = out_dir / "tmp_page"
+    ext = "png" if formato == "png" else "tiff"
+
+    def _renombrar_salida() -> list[str]:
+        generados = sorted(out_dir.glob(f"{tmp_base.name}*"))
+        imagenes: list[str] = []
+        for i, src in enumerate(generados, 1):
+            dst = out_dir / f"page_{i:03d}.{ext}"
+            src.rename(dst)
+            imagenes.append(str(dst))
+        return imagenes
+
+    # 1) Intento: pdfimages
+    cmd = None
+    if shutil.which("pdfimages"):
+        cmd = ["pdfimages", f"-{formato}", str(pdf_path), str(tmp_base)]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return _renombrar_salida()
+        except Exception:
+            pass
+
+    # 2) Intento: pdftoppm
+    if shutil.which("pdftoppm"):
+        cmd = ["pdftoppm", f"-{formato}", "-r", str(dpi), str(pdf_path), str(tmp_base)]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return _renombrar_salida()
+        except Exception:
+            pass
+
+    # 3) Fallback: PyMuPDF
+    try:
+        import fitz
+    except Exception as e:  # pragma: no cover - se ejecuta solo si falta fitz
+        raise RuntimeError(
+            "No se encontraron 'pdfimages', 'pdftoppm' ni la librería PyMuPDF"
+        ) from e
+
+    doc = fitz.open(str(pdf_path))
+    imagenes: list[str] = []
+    for i, pagina in enumerate(doc, 1):
+        pix = pagina.get_pixmap(dpi=dpi)
+        dst = out_dir / f"page_{i:03d}.{ext}"
+        pix.save(str(dst))
+        imagenes.append(str(dst))
+    return imagenes
+
+
 def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
     if not _WINOCR_OK:
         logging.info("[WINOCR] Paquete winrt no disponible.")
@@ -1374,39 +1472,45 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
 
     out = fitz.open()
     try:
-        for i in range(src.page_count):
-            pg = src[i]
-            pix = pg.get_pixmap(dpi=dpi, alpha=False)
-            png_bytes = pix.tobytes("png")
-            page_w, page_h = pg.rect.width, pg.rect.height
-            img_w, img_h = pix.width, pix.height
-            sx, sy = page_w / img_w, page_h / img_h
+        with TemporaryDirectory() as tmpdir:
+            imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
+            for i, img in enumerate(imgs):
+                pg = src[i]
+                pix = fitz.Pixmap(img)
+                png_bytes = pix.tobytes("png")
+                page_w, page_h = pg.rect.width, pg.rect.height
+                img_w, img_h = pix.width, pix.height
+                sx, sy = page_w / img_w, page_h / img_h
 
-            ocr_result = None
-            for tag in lang_tags:
-                try:
-                    ocr_result = _run_ocr_sync(png_bytes, tag.strip())
-                    if ocr_result and getattr(ocr_result, "text", None):
-                        break
-                except Exception as e:
-                    logging.info(f"[WINOCR] Intento con {tag} falló: {e}")
-                    continue
+                ocr_result = None
+                for tag in lang_tags:
+                    try:
+                        ocr_result = _run_ocr_sync(png_bytes, tag.strip())
+                        if ocr_result and getattr(ocr_result, "text", None):
+                            break
+                    except Exception as e:
+                        logging.info(f"[WINOCR] Intento con {tag} falló: {e}")
+                        continue
 
-            newp = out.new_page(width=page_w, height=page_h)
-            newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes)
+                newp = out.new_page(width=page_w, height=page_h)
+                newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes)
 
-            if ocr_result and ocr_result.lines:
-                for line in ocr_result.lines:
-                    for word in line.words:
-                        r = word.bounding_rect
-                        x0, y0 = r.x * sx, r.y * sy
-                        x1, y1 = (r.x + r.width) * sx, (r.y + r.height) * sy
-                        rect = fitz.Rect(x0, y0, x1, y1)
-                        fontsize = max(4, (y1 - y0) * 0.9)
-                        try:
-                            newp.insert_textbox(rect, word.text or "", fontsize=fontsize, render_mode=3)
-                        except Exception:
-                            newp.insert_text((x0, y1), word.text or "", fontsize=fontsize, render_mode=3)
+                if ocr_result and ocr_result.lines:
+                    for line in ocr_result.lines:
+                        for word in line.words:
+                            r = word.bounding_rect
+                            x0, y0 = r.x * sx, r.y * sy
+                            x1, y1 = (r.x + r.width) * sx, (r.y + r.height) * sy
+                            rect = fitz.Rect(x0, y0, x1, y1)
+                            fontsize = max(4, (y1 - y0) * 0.9)
+                            try:
+                                newp.insert_textbox(
+                                    rect, word.text or "", fontsize=fontsize, render_mode=3
+                                )
+                            except Exception:
+                                newp.insert_text(
+                                    (x0, y1), word.text or "", fontsize=fontsize, render_mode=3
+                                )
 
         out.save(str(dst), deflate=True, garbage=3)
         return dst.exists() and dst.stat().st_size > 1024
@@ -3937,6 +4041,11 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             # 9) Fusión final
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
             fusionar_bloques_inline(bloques, out)
+
+            # Intentar aplicar OCR al PDF final
+            ocr_out = _maybe_ocr(out)
+            if ocr_out != out:
+                shutil.move(ocr_out, out)
 
             if _env_true("OCR_FINAL_FORCE"):
                 try:
