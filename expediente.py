@@ -3834,13 +3834,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · {titulo} · {pth.name}")
                     hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    force_ocr = _env_true("OCR_ADJUNTOS_FORCE", "1")  # por defecto se fuerza como hoy
-                    pth_ocr = _maybe_ocr(pth, force=force_ocr)
-                    if isinstance(pth_ocr, Path) and pth_ocr.exists():
-                        pth = pth_ocr
-
-                    _mf(f"ADJUNTO · {titulo} · {pth.name}")
-                    hdr = (f"ADJUNTO · {titulo}") if STAMP else None
                     _push_pdf(pth, hdr)
                     logging.info(f"[MERGE] ADJ · {pth.name} (op {op_id})")
 
@@ -3933,13 +3926,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · (sin operación) · {pth.name}")
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
-                    force_ocr = _env_true("OCR_ADJUNTOS_FORCE", "1")  # por defecto se fuerza como hoy
-                    pth_ocr = _maybe_ocr(pth, force=force_ocr)
-                    if isinstance(pth_ocr, Path) and pth_ocr.exists():
-                        pth = pth_ocr
-
-                    _mf(f"ADJUNTO · (sin operación) · {pth.name}")
-                    hdr = ("ADJUNTO · (sin operación)") if STAMP else None
                     _push_pdf(pth, hdr)
 
 
@@ -3951,6 +3937,25 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             # 9) Fusión final
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
             fusionar_bloques_inline(bloques, out)
+
+            if _env_true("OCR_FINAL_FORCE"):
+                try:
+                    tmp_out = out.with_name(out.stem + "_ocr.pdf")
+                    subprocess.run(
+                        [
+                            "ocrmypdf",
+                            "--image-dpi",
+                            "300",
+                            "--deskew",
+                            "--rotate-pages",
+                            str(out),
+                            str(tmp_out),
+                        ],
+                        check=True,
+                    )
+                    shutil.move(tmp_out, out)
+                except Exception:
+                    logging.exception("[OCR] Falló OCR final")
 
             _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques)})")
             logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques)}")
