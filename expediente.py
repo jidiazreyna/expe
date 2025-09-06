@@ -21,7 +21,7 @@ import queue
 from tkinter import Toplevel, ttk
 from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
-import subprocess, io
+import subprocess
 
 # --------------------------- RUTAS Y RECURSOS --------------------------
 if getattr(sys, "frozen", False):  # ejecutable .exe
@@ -35,18 +35,6 @@ os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BASE_PATH / "ms-playwright")
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# ==== OCR portátil, sin PyMuPDF, usando pypdfium2 + pytesseract ====
-from io import BytesIO
-
-try:
-    import pytesseract
-except Exception:
-    pytesseract = None
-
-try:
-    import pypdfium2 as pdfium
-except Exception:
-    pdfium = None
 
 
 
@@ -78,141 +66,6 @@ def _allow_ocrmypdf() -> bool:
     if _is_frozen():
         return False
     return _has_ocrmypdf() and _has_gs()
-
-def _find_tesseract_portable(base_path: Path) -> Path | None:
-    """
-    Busca tesseract.exe empaquetado al lado del .exe/.py (o dentro de _MEIPASS).
-    """
-    candidates = [
-        base_path / "tesseract" / "tesseract.exe",
-        base_path / "bin" / "tesseract.exe",  # por si lo guardaste en otra carpeta
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    return None
-
-
-def _configurar_tesseract(base_path: Path) -> bool:
-    """
-    Configura pytesseract para usar el binario portable. Setea TESSDATA_PREFIX.
-    Devuelve True si quedó operativo.
-    """
-    exe = _find_tesseract_portable(base_path)
-    if not exe:
-        logging.info("[OCR] No se encontró tesseract.exe junto al ejecutable/script.")
-        return False
-
-    tessdata = exe.parent / "tessdata"
-    os.environ["TESSDATA_PREFIX"] = str(tessdata)
-    pytesseract.pytesseract.tesseract_cmd = str(exe)
-
-    try:
-        v = pytesseract.get_tesseract_version()
-        logging.info(f"[OCR] Tesseract OK · {v}")
-        return True
-    except Exception as e:
-        logging.info(f"[OCR] Tesseract no respondió: {e}")
-        return False
-
-
-def _pdf_tiene_texto(pdf_path: Path, max_pages: int = 3) -> bool:
-    """
-    Heurística rápida: si pdfminer encuentra algo de texto en las primeras páginas,
-    consideramos que no necesita OCR.
-    """
-    try:
-        from pdfminer.high_level import extract_text 
-
-        text = extract_text(str(pdf_path), maxpages=max_pages) or ""
-        return bool(text.strip())
-    except Exception:
-        # Si falla pdfminer, probamos con PyPDF2 (menos preciso)
-        try:
-            r = PdfReader(str(pdf_path))
-            for i, p in enumerate(r.pages[:max_pages]):
-                if (p.extract_text() or "").strip():
-                    return True
-        except Exception:
-            pass
-        return False
-
-
-def ocr_pdf_portable(
-    pdf_in: Path, pdf_out: Path | None = None, langs: str = "spa+eng", dpi: int = 300
-) -> Path:
-    """
-    Convierte 'pdf_in' a PDF con capa de texto usando Tesseract portable.
-    - Renderiza cada página con pypdfium2 (sin PyMuPDF).
-    - Corre pytesseract.image_to_pdf_or_hocr para obtener PDF 'searchable'.
-    """
-    pdf_in = Path(pdf_in)
-    if not pdf_in.exists():
-        raise FileNotFoundError(pdf_in)
-
-    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
-    if not _configurar_tesseract(base_path):
-        logging.info("[OCR] No hay Tesseract ? devuelvo original sin OCR.")
-        return pdf_in
-
-    if pdf_out is None:
-        pdf_out = pdf_in.with_suffix(".ocr.pdf")
-
-    merger = PdfMerger()
-    doc = pdfium.PdfDocument(str(pdf_in))
-    scale = dpi / 72.0  # 72 dpi ? factor de escala
-
-    try:
-        for i in range(len(doc)):
-            page = doc[i]
-            # Render a PIL (RGB); si hay alpha, convertilo
-            pil = page.render(scale=scale).to_pil()
-            from PIL import ImageOps, ImageFilter
-            pil = pil.convert("L")                       # gris
-            pil = ImageOps.autocontrast(pil, cutoff=1)   # mejora contraste
-            pil = pil.filter(ImageFilter.SHARPEN)        # un poco de nitidez
-            if pil.mode != "RGB":
-                pil = pil.convert("RGB")
-            # Tesseract devuelve un PDF monoplana en bytes
-            pdf_bytes = pytesseract.image_to_pdf_or_hocr(pil, extension="pdf", lang=langs)
-            merger.append(BytesIO(pdf_bytes))
-    finally:
-        try:
-            doc.close()
-        except Exception:
-            pass
-
-    with open(pdf_out, "wb") as f:
-        merger.write(f)
-    merger.close()
-    logging.info(f"[OCR] Generado: {pdf_out.name}")
-    return pdf_out
-
-
-def _ocr_if_needed(pdf_path: Path) -> Path:
-    """
-    Aplica OCR si:
-    - OCR_ENABLE=1 (default) y NO hay texto,
-    - o siempre si OCR_FORCE=1.
-    Usa idiomas de OCR_LANGS (default: spa+eng) y DPI OCR_DPI (default: 300).
-    """
-    if os.getenv("OCR_ENABLE", "1").lower() not in ("1", "true", "t", "yes", "y", "si", "sí"):
-        return pdf_path
-
-    try:
-        force = os.getenv("OCR_FORCE", "0").lower() in ("1", "true", "t", "yes", "y", "si", "sí")
-        if not force and _pdf_tiene_texto(pdf_path):
-            logging.info(f"[OCR] {pdf_path.name}: ya tiene texto ? salto OCR.")
-            return pdf_path
-
-        langs = os.getenv("OCR_LANGS", "spa+eng")
-        dpi = int(os.getenv("OCR_DPI", "600"))
-        out = ocr_pdf_portable(pdf_path, langs=langs, dpi=dpi)
-        return out if out.exists() else pdf_path
-    except Exception as e:
-        logging.info(f"[OCR:ERR] {pdf_path.name}: {e}")
-        return pdf_path
-
 
 # --------- Seguridad/Permisos ---------
 PERM_MSG = "El usuario no tiene los permisos suficientes para visualizar este contenido."
@@ -1455,6 +1308,26 @@ def _find_tesseract_cmd() -> str | None:
     return None
 
 
+# Estructura esperada del tesseract portátil:
+# tesseract/
+#   tesseract.exe
+#   *.dll
+#   tessdata/
+#       spa.traineddata
+#       eng.traineddata
+def _prepare_tesseract_env() -> bool:
+    try:
+        import pytesseract
+    except Exception:
+        return False
+    cmd = (BASE_PATH / "tesseract" / "tesseract.exe")
+    if not cmd.exists():
+        return False
+    pytesseract.pytesseract.tesseract_cmd = str(cmd)
+    os.environ.setdefault("TESSDATA_PREFIX", str(cmd.parent / "tessdata"))
+    return True
+
+
 def _pdf_char_count(path: Path, paginas: int = 3) -> int:
     """
     Cuenta caracteres de texto en las primeras `paginas` del PDF.
@@ -1555,98 +1428,44 @@ def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
         return False
 
 
-def _find_tesseract_cmd() -> str | None:
-    import shutil
-    cand = [
-        os.getenv("TESSERACT_CMD", "").strip() or None,
-        str(BASE_PATH / "tesseract" / "tesseract.exe"),
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        shutil.which("tesseract"),
-    ]
-    for c in cand:
-        if c and Path(c).exists():
-            return c
-    return None
 
 
 def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=600) -> bool:
-    import pypdfium2 as pdfium
-    from PIL import Image, ImageOps, ImageFilter
-    import io, subprocess, os
-
-    tesseract_cmd = _find_tesseract_cmd()
-    if not tesseract_cmd or not Path(tesseract_cmd).exists():
-        logging.info("[OCR:TESS] tesseract_cmd MISSING")
+    if pdfium is None:
+        logging.info("[OCR:TESS] pypdfium2 MISSING")
+        return False
+    try:
+        import pytesseract
+        from PIL import ImageOps, ImageFilter
+        from io import BytesIO
+    except Exception:
+        logging.info("[OCR:TESS] pytesseract/PIL MISSING")
         return False
 
-    tessdir = Path(tesseract_cmd).parent
-    tessdata = tessdir / "tessdata"
+    if not _prepare_tesseract_env():
+        logging.info("[OCR:TESS] Embedded tesseract missing")
+        return False
 
-    import pytesseract, os
-    pytesseract.pytesseract.tesseract_cmd = str(tesseract_cmd)   # 👈 clave para el fallback
-    os.environ["TESSDATA_PREFIX"] = str(tessdata)                 # 👈 debe apuntar a /tessdata
-
-    lang_list = [l.strip() for l in (langs or "eng").split("+") if l.strip()]
     merger = PdfMerger()
-
     try:
-        with TemporaryDirectory() as tdir_str:
-            tdir = Path(tdir_str)
-            doc = pdfium.PdfDocument(str(pdf_in))
-            for i in range(len(doc)):
-                pil = doc[i].render(scale=dpi/72).to_pil().convert("L")
-                pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
-                in_img = tdir / f"page_{i}.png"
-                pil.save(str(in_img))
+        doc = pdfium.PdfDocument(str(pdf_in))
+        scale = dpi / 72.0
+        for i in range(len(doc)):
+            pil = doc[i].render(scale=scale).to_pil().convert("L")
+            pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
+            cfg = f"--psm 6 --oem 1 -c preserve_interword_spaces=1 -c user_defined_dpi={dpi}"
+            pdf_bytes = pytesseract.image_to_pdf_or_hocr(pil, extension="pdf", lang=langs, config=cfg)
+            merger.append(BytesIO(pdf_bytes))
 
-                out_base = tdir / f"tess_{i}"
-                cmd = [
-                    str(tesseract_cmd),
-                    str(in_img),
-                    str(out_base),
-                    "-l", "+".join(lang_list),
-                    "--tessdata-dir", str(tessdata),     # 👈 clave
-                    "-c", f"user_defined_dpi={dpi}",
-                    "--psm", "6",
-                    "--oem", "1",
-                    "-c", "preserve_interword_spaces=1",
-                    "-c", "tessedit_do_invert=1",
-                    "pdf",
-                ]
-                logging.info(f"[OCR:TESS:RUN] page={i+1} cmd={' '.join(cmd[:-1])} pdf")
-                # Ejecutar en el tmp por si el binario ignora outputbase
-                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(tdir))
-
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                if res.returncode != 0:
-                    logging.info(f"[OCR:TESS:ERR] page={i+1} code={res.returncode} stderr={res.stderr[:800]}")
-                # aunque retorne 0, si no apareció el .pdf, registralo igual:
-                out_pdf = Path(str(out_base) + ".pdf")
-                if not out_pdf.exists():
-                    logging.info(f"[OCR:TESS:MISS] page={i+1} no generó {out_pdf.name}. stderr={res.stderr[:800]}")
-                    pdf_bytes = pytesseract.image_to_pdf_or_hocr(
-                        pil,
-                        extension="pdf",
-                        lang="+".join(lang_list),
-                        config=(
-                            f"--psm 6 --oem 1 "
-                            f"--tessdata-dir \"{tessdata}\" "
-                            f"-c preserve_interword_spaces=1 -c tessedit_do_invert=1 "
-                            f"-c user_defined_dpi={dpi}"
-                        ),
-                    )
-                    merger.append(io.BytesIO(pdf_bytes))
-                else:
-                    with open(out_pdf, "rb") as f:
-                        merger.append(io.BytesIO(f.read()))
-
-        with open(str(dst), "wb") as f:
+        with open(dst, "wb") as f:
             merger.write(f)
         merger.close()
         return dst.exists() and dst.stat().st_size > 1024
     except Exception as ex:
-        try: merger.close()
-        except: pass
+        try:
+            merger.close()
+        except:
+            pass
         logging.info(f"[OCR:TESS:EXC] {ex}")
         return False
 
@@ -1692,14 +1511,15 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
             from shutil import which
         ocrmypdf_ok = _has_ocrmypdf()
         gs_ok = _has_gs()
-        tesseract_path = _find_tesseract_cmd()
+        embedded = BASE_PATH / "tesseract" / "tesseract.exe"
+        tesseract_path = str(embedded) if embedded.exists() else _find_tesseract_cmd()
         logging.info(
             f"[OCR:CFG] mode={mode} langs={langs} dpi={dpi}"
         )
         logging.info(
             f"[OCR:STA] ocrmypdf={'OK' if ocrmypdf_ok else 'OFF'} | "
             f"gs={'OK' if gs_ok else 'MISSING'} | "
-            f"tesseract={'OK:'+tesseract_path if tesseract_path else 'MISSING'} | "
+            f"tesseract={'OK:'+tesseract_path if tesseract_path and Path(tesseract_path).exists() else 'MISSING'} | "
             f"pdfium={'OK' if pdfium else 'MISSING'} | pytesseract={'OK' if pytesseract else 'MISSING'}"
         )
     _ocr_preflight_log()
@@ -4439,3 +4259,4 @@ if __name__ == "__main__":
     _set_tk_icon(root)  # ? usa icono3.ico desde BASE_PATH (soporta modo frozen)
     App(root)
     root.mainloop()
+# Nota: Al ejecutar con OCR_MODE=force, los adjuntos siempre salen con capa de texto.
