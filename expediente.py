@@ -20,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 import queue
 from tkinter import Toplevel, ttk
 from tkinter.scrolledtext import ScrolledText
-
+from tempfile import TemporaryDirectory
+import subprocess, io
 
 # --------------------------- RUTAS Y RECURSOS --------------------------
 if getattr(sys, "frozen", False):  # ejecutable .exe
@@ -166,6 +167,10 @@ def ocr_pdf_portable(
             page = doc[i]
             # Render a PIL (RGB); si hay alpha, convertilo
             pil = page.render(scale=scale).to_pil()
+            from PIL import ImageOps, ImageFilter
+            pil = pil.convert("L")                       # gris
+            pil = ImageOps.autocontrast(pil, cutoff=1)   # mejora contraste
+            pil = pil.filter(ImageFilter.SHARPEN)        # un poco de nitidez
             if pil.mode != "RGB":
                 pil = pil.convert("RGB")
             # Tesseract devuelve un PDF monoplana en bytes
@@ -201,7 +206,7 @@ def _ocr_if_needed(pdf_path: Path) -> Path:
             return pdf_path
 
         langs = os.getenv("OCR_LANGS", "spa+eng")
-        dpi = int(os.getenv("OCR_DPI", "300"))
+        dpi = int(os.getenv("OCR_DPI", "600"))
         out = ocr_pdf_portable(pdf_path, langs=langs, dpi=dpi)
         return out if out.exists() else pdf_path
     except Exception as e:
@@ -1473,12 +1478,33 @@ def _pdf_char_count(path: Path, paginas: int = 3) -> int:
 
 
 def _has_enough_text(path: Path, paginas: int = 3) -> bool:
-    """
-    True si el PDF tiene "suficiente" texto (umbral configurable).
-    Evita falsos positivos por 1–2 caracteres sueltos.
-    """
-    min_chars = int(os.getenv("OCR_MIN_CHARS", "80"))  # podés subirlo a 120/150 si querés
-    return _pdf_char_count(path, paginas=paginas) >= min_chars
+    min_chars = int(os.getenv("OCR_MIN_CHARS", "800"))
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(str(path))
+        total = 0
+        n = min(doc.page_count, max(1, int(paginas)))
+        for i in range(n):
+            pg = doc[i]
+            h = pg.rect.height
+            top, bottom = 0.12*h, 0.88*h  # ignora ~12% superior e inferior (cabecera/pie)
+            for x0,y0,x1,y1,txt,*_ in (pg.get_text("blocks") or []):
+                if y1 <= top or y0 >= bottom:
+                    continue
+                total += len((txt or "").strip())
+        doc.close()
+        return total >= min_chars
+    except Exception:
+        # Fallback PyPDF2
+        try:
+            from PyPDF2 import PdfReader
+            r = PdfReader(str(path))
+            total = 0
+            for p in r.pages[:paginas]:
+                total += len((p.extract_text() or "").strip())
+            return total >= min_chars
+        except Exception:
+            return False
 
 
 def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
@@ -1496,7 +1522,7 @@ def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
         return False
     if not _has_gs():
         return False
-
+    logging.info(f"[OCR:OCRMYPDF] exe={exe} gs_ok={_has_gs()} force={force} langs={langs}")
     # Preparar entorno para tesseract embebido (si lo tenés en ./tesseract/)
     cmd = _find_tesseract_cmd()
     env = os.environ.copy()
@@ -1521,84 +1547,109 @@ def _ocr_con_ocrmypdf(src: Path, dst: Path, langs: str, force: bool) -> bool:
                        stderr=subprocess.DEVNULL,
                        env=env)
         return dst.exists() and dst.stat().st_size > 1024
+    except Exception as e:
+        if hasattr(e, "stderr"):
+            logging.info(f"[OCR:OCRMYPDF:ERR] {(e.stderr or b'').decode('utf-8', 'ignore')[:800]}")
+        logging.info(f"[OCR:OCRMYPDF:EXC] {e}")
     except Exception:
         return False
 
 
-def _ocr_con_pdfium_y_tesseract(src: Path, dst: Path, langs: str, dpi: int) -> bool:
-    """
-    Pipeline 100% portable:
-      PDF (src) -> raster con pypdfium2 -> Tesseract (pdf por página) -> merge -> dst
-    Requiere: pypdfium2 + pytesseract + tesseract.exe embebido + tessdata (spa, eng).
-    """
-    if not (pdfium and pytesseract):
-        logging.info("[OCR:FALLBACK] pdfium/pytesseract no disponibles.")
+def _find_tesseract_cmd() -> str | None:
+    import shutil
+    cand = [
+        os.getenv("TESSERACT_CMD", "").strip() or None,
+        str(BASE_PATH / "tesseract" / "tesseract.exe"),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        shutil.which("tesseract"),
+    ]
+    for c in cand:
+        if c and Path(c).exists():
+            return c
+    return None
+
+
+def _ocr_con_pdfium_y_tesseract(pdf_in: Path, dst: Path, langs="spa+eng", dpi=600) -> bool:
+    import pypdfium2 as pdfium
+    from PIL import Image, ImageOps, ImageFilter
+    import io, subprocess, os
+
+    tesseract_cmd = _find_tesseract_cmd()
+    if not tesseract_cmd or not Path(tesseract_cmd).exists():
+        logging.info("[OCR:TESS] tesseract_cmd MISSING")
         return False
 
-    cmd = _find_tesseract_cmd()
-    if not cmd or not Path(cmd).exists():
-        logging.info("[OCR:FALLBACK] tesseract.exe no encontrado.")
-        return False
+    tessdir = Path(tesseract_cmd).parent
+    tessdata = tessdir / "tessdata"
 
-    tdir = Path(cmd).parent  # ...\tesseract
-    os.environ["TESSDATA_PREFIX"] = str(Path(cmd).parent / "tessdata")
+    import pytesseract, os
+    pytesseract.pytesseract.tesseract_cmd = str(tesseract_cmd)   # 👈 clave para el fallback
+    os.environ["TESSDATA_PREFIX"] = str(tessdata)                 # 👈 debe apuntar a /tessdata
 
-    pytesseract.pytesseract.tesseract_cmd = cmd
-
-    # evitar warnings por imágenes grandes
-    try:
-        from PIL import Image as _PILImage
-        _PILImage.MAX_IMAGE_PIXELS = None
-    except Exception:
-        pass
-
-    tmp = dst.with_suffix(".tmpdir")
-    tmp.mkdir(exist_ok=True, parents=True)
-    pages_out = []
+    lang_list = [l.strip() for l in (langs or "eng").split("+") if l.strip()]
+    merger = PdfMerger()
 
     try:
-        doc = pdfium.PdfDocument(str(src))
-        scale = max(72, int(dpi)) / 72.0
-        for i in range(len(doc)):
-            pg = doc[i]
-            pil = pg.render(scale=scale).to_pil()
-            if pil.mode != "RGB":
-                pil = pil.convert("RGB")
-            try:
-                pdf_bytes = pytesseract.image_to_pdf_or_hocr(
-                    pil, extension="pdf", lang=langs
-                )
-            except Exception as e:
-                logging.info(f"[OCR:FALLBACK:ERR] tesseract en pág {i+1}: {e}")
-                return False
-            pth = tmp / f"page_{i:05d}.pdf"
-            with open(pth, "wb") as f:
-                f.write(pdf_bytes)
-            pages_out.append(pth)
+        with TemporaryDirectory() as tdir_str:
+            tdir = Path(tdir_str)
+            doc = pdfium.PdfDocument(str(pdf_in))
+            for i in range(len(doc)):
+                pil = doc[i].render(scale=dpi/72).to_pil().convert("L")
+                pil = ImageOps.autocontrast(pil, cutoff=1).filter(ImageFilter.SHARPEN).convert("RGB")
+                in_img = tdir / f"page_{i}.png"
+                pil.save(str(in_img))
 
-        # unir páginas OCR a un solo PDF
-        merger = PdfMerger()
-        for p in pages_out:
-            merger.append(str(p))
-        with open(dst, "wb") as f:
+                out_base = tdir / f"tess_{i}"
+                cmd = [
+                    str(tesseract_cmd),
+                    str(in_img),
+                    str(out_base),
+                    "-l", "+".join(lang_list),
+                    "--tessdata-dir", str(tessdata),     # 👈 clave
+                    "-c", f"user_defined_dpi={dpi}",
+                    "--psm", "6",
+                    "--oem", "1",
+                    "-c", "preserve_interword_spaces=1",
+                    "-c", "tessedit_do_invert=1",
+                    "pdf",
+                ]
+                logging.info(f"[OCR:TESS:RUN] page={i+1} cmd={' '.join(cmd[:-1])} pdf")
+                # Ejecutar en el tmp por si el binario ignora outputbase
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(tdir))
+
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode != 0:
+                    logging.info(f"[OCR:TESS:ERR] page={i+1} code={res.returncode} stderr={res.stderr[:800]}")
+                # aunque retorne 0, si no apareció el .pdf, registralo igual:
+                out_pdf = Path(str(out_base) + ".pdf")
+                if not out_pdf.exists():
+                    logging.info(f"[OCR:TESS:MISS] page={i+1} no generó {out_pdf.name}. stderr={res.stderr[:800]}")
+                    pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                        pil,
+                        extension="pdf",
+                        lang="+".join(lang_list),
+                        config=(
+                            f"--psm 6 --oem 1 "
+                            f"--tessdata-dir \"{tessdata}\" "
+                            f"-c preserve_interword_spaces=1 -c tessedit_do_invert=1 "
+                            f"-c user_defined_dpi={dpi}"
+                        ),
+                    )
+                    merger.append(io.BytesIO(pdf_bytes))
+                else:
+                    with open(out_pdf, "rb") as f:
+                        merger.append(io.BytesIO(f.read()))
+
+        with open(str(dst), "wb") as f:
             merger.write(f)
         merger.close()
-
-        ok = dst.exists() and dst.stat().st_size > 1024
-        logging.info(f"[OCR:FALLBACK]{' OK' if ok else ' FAIL'} · {dst.name}")
-        return ok
-
-    except Exception as e:
-        logging.info(f"[OCR:FALLBACK:ERR] {e}")
+        return dst.exists() and dst.stat().st_size > 1024
+    except Exception as ex:
+        try: merger.close()
+        except: pass
+        logging.info(f"[OCR:TESS:EXC] {ex}")
         return False
-    finally:
-        for p in pages_out:
-            try: p.unlink()
-            except Exception: pass
-        try:
-            tmp.rmdir()
-        except Exception:
-            shutil.rmtree(tmp, ignore_errors=True)
+
 
 
 def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
@@ -1614,7 +1665,7 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     """
     mode = (os.getenv("OCR_MODE", "") or "").lower() or ("force" if _is_frozen() else "auto")
     langs = os.getenv("OCR_LANGS", "spa+eng")
-    dpi = int(os.getenv("OCR_DPI", "300"))
+    dpi = int(os.getenv("OCR_DPI", "600"))
     sample_pages = int(os.getenv("OCR_SAMPLE_PAGES", "3"))
 
     logging.info(f"[OCR] check · {pdf_in.name}")
@@ -1626,6 +1677,10 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     # ¿tiene suficiente texto?
     need_ocr = not _has_enough_text(pdf_in, paginas=sample_pages)
     do_force = force or (mode == "force")
+    logging.info(f"[OCR:NEED] need_ocr={need_ocr} do_force={do_force} sample_pages={sample_pages}")
+
+
+    logging.info(f"[OCR:ALLOW] allow_ocrmypdf={_allow_ocrmypdf()} has_ocrmypdf={_has_ocrmypdf()} has_gs={_has_gs()}")
 
     dst = pdf_in.with_suffix(".ocr.pdf")
 
@@ -1653,17 +1708,22 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
 
     # 1) ocrmypdf si (y sólo si) está permitido y completo
     if _allow_ocrmypdf():
+        logging.info("[OCR:TRY] ocrmypdf")
         ok = _ocr_con_ocrmypdf(pdf_in, dst, langs, force=do_force)
+        logging.info(f"[OCR:RES] ocrmypdf ok={ok}")
 
     # 2) Fallback SIEMPRE disponible en el .exe
     if not ok and (need_ocr or do_force):
-        ok = _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi)
+        logging.info("[OCR:TRY] pdfium+tesseract (fallback)")
+        ok = _ocr_con_pdfium_y_tesseract(pdf_in, dst, langs, dpi)  # <- ahora devuelve True/False
+        logging.info(f"[OCR:RES] fallback ok={ok}")
 
     if ok:
         logging.info(f"[OCR] {'FORCE' if do_force else 'AUTO'} -> {dst.name}")
         return dst
+    
 
-    logging.info("[OCR] no aplicado (pipeline no disponible o fallo)")
+    logging.info(f"[OCR] SKIP/FAIL -> uso original: {pdf_in.name}")
     return pdf_in
 
 
@@ -4011,13 +4071,20 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 if key in ya_agregados:
                     return
                 ya_agregados.add(key)
-                # ? OCR aquí
-                pth = _maybe_ocr(pth, force=True)
+
+
+
+                # Limpieza de páginas en blanco (si falla, seguimos con el archivo tal cual)
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
                     pass
+
+                if not pth or not Path(pth).exists():
+                    return
+
                 bloques.append((pth, hdr))
+
 
             # Helper: adjuntos de operación (Libro + Grid)
             def _agregar_adjuntos_de_op(op_id: str, titulo: str):
@@ -4035,6 +4102,13 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     )
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                         continue
+                    _mf(f"ADJUNTO · {titulo} · {pth.name}")
+                    hdr = (f"ADJUNTO · {titulo}") if STAMP else None
+                    # OCR SIEMPRE para adjuntos
+                    pth_ocr = _maybe_ocr(pth, force=True)
+                    if isinstance(pth_ocr, Path) and pth_ocr.exists():
+                        pth = pth_ocr
+
                     _mf(f"ADJUNTO · {titulo} · {pth.name}")
                     hdr = (f"ADJUNTO · {titulo}") if STAMP else None
                     _push_pdf(pth, hdr)
@@ -4129,7 +4203,15 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · (sin operación) · {pth.name}")
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
+                    # OCR SIEMPRE para adjuntos (sin operación)
+                    pth_ocr = _maybe_ocr(pth, force=True)
+                    if isinstance(pth_ocr, Path) and pth_ocr.exists():
+                        pth = pth_ocr
+
+                    _mf(f"ADJUNTO · (sin operación) · {pth.name}")
+                    hdr = ("ADJUNTO · (sin operación)") if STAMP else None
                     _push_pdf(pth, hdr)
+
 
             if not bloques:
                 raise RuntimeError(
@@ -4139,15 +4221,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             # 9) Fusión final
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
             fusionar_bloques_inline(bloques, out)
-            # Pase final de OCR (portable) al PDF ya fusionado
-            final_ocr = _maybe_ocr(out, force=True)
-            try:
-                if final_ocr != out and final_ocr.exists():
-                    # reemplaza el archivo final por su versión OCR
-                    out.unlink(missing_ok=True)
-                    final_ocr.rename(out)
-            except Exception:
-                pass
+
             _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques)})")
             logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques)}")
             etapa("Listo: PDF final creado")
@@ -4316,7 +4390,7 @@ class App:
 # ---------------------------- MAIN -------------------------------------
 LOG = BASE_PATH / "debug.log"
 logging.basicConfig(
-    filename=LOG,
+    filename=str(LOG),
     level=logging.INFO,
     format="%(asctime)s %(message)s",
     datefmt="%H:%M:%S",
