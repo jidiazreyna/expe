@@ -1385,40 +1385,12 @@ async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
 def convertir_pdf_a_imagenes(
     pdf_path: str | Path, out_dir: str | Path, formato: str = "png", dpi: int = 300
 ) -> list[str]:
-    """Convierte cada página de un PDF en un archivo de imagen independiente.
-
-    Se intentará usar ``pdfimages`` (Poppler) si está disponible en el sistema.
-    Si no se encuentra, se probará ``pdftoppm``. Como último recurso, se
-    utilizará `PyMuPDF <https://pymupdf.readthedocs.io/>`_ (``fitz``).
-
-    Los archivos resultantes se nombran ``page_001.png``, ``page_002.png``,
-    etc. y se guardan en ``out_dir``.
-
-    Parameters
-    ----------
-    pdf_path:
-        Ruta al archivo PDF de origen.
-    out_dir:
-        Directorio donde se guardarán las imágenes.
-    formato:
-        Formato de salida: ``"png"`` (por defecto) o ``"tiff"``.
-    dpi:
-        Resolución para el renderizado cuando se utiliza PyMuPDF o ``pdftoppm``.
-
-    Returns
-    -------
-    list[str]
-        Lista con las rutas de las imágenes generadas.
-
-    Raises
-    ------
-    FileNotFoundError
-        Si ``pdf_path`` no existe.
-    ValueError
-        Si ``formato`` no es ``"png"`` ni ``"tiff"``.
-    RuntimeError
-        Si no hay herramientas disponibles para realizar la conversión.
+    """Renderiza 1 imagen por página (1:1) del PDF.
+    Preferir pdftoppm; si no existe, usar PyMuPDF (fitz).
+    Nombres: page_001.png / page_001.tiff, etc.
     """
+    import subprocess, shutil
+    from pathlib import Path
 
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
@@ -1430,12 +1402,15 @@ def convertir_pdf_a_imagenes(
     formato = formato.lower()
     if formato not in {"png", "tiff"}:
         raise ValueError("formato debe ser 'png' o 'tiff'")
-
-    tmp_base = out_dir / "tmp_page"
     ext = "png" if formato == "png" else "tiff"
 
-    def _renombrar_salida() -> list[str]:
-        generados = sorted(out_dir.glob(f"{tmp_base.name}*"))
+    base = out_dir / "page"
+
+    # 1) pdftoppm (genera page-1.png, page-2.png, ...)
+    if shutil.which("pdftoppm"):
+        cmd = ["pdftoppm", f"-{ext}", "-r", str(dpi), str(pdf_path), str(base)]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        generados = sorted(out_dir.glob(f"{base.name}-*.{ext}"), key=lambda p: int(p.stem.split("-")[-1]))
         imagenes: list[str] = []
         for i, src in enumerate(generados, 1):
             dst = out_dir / f"page_{i:03d}.{ext}"
@@ -1443,33 +1418,8 @@ def convertir_pdf_a_imagenes(
             imagenes.append(str(dst))
         return imagenes
 
-    # 1) Intento: pdfimages
-    cmd = None
-    if shutil.which("pdfimages"):
-        cmd = ["pdfimages", f"-{formato}", str(pdf_path), str(tmp_base)]
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return _renombrar_salida()
-        except Exception:
-            pass
-
-    # 2) Intento: pdftoppm
-    if shutil.which("pdftoppm"):
-        cmd = ["pdftoppm", f"-{formato}", "-r", str(dpi), str(pdf_path), str(tmp_base)]
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return _renombrar_salida()
-        except Exception:
-            pass
-
-    # 3) Fallback: PyMuPDF
-    try:
-        import fitz
-    except Exception as e:  # pragma: no cover - se ejecuta solo si falta fitz
-        raise RuntimeError(
-            "No se encontraron 'pdfimages', 'pdftoppm' ni la librería PyMuPDF"
-        ) from e
-
+    # 2) Fallback: PyMuPDF por página
+    import fitz
     doc = fitz.open(str(pdf_path))
     imagenes: list[str] = []
     for i, pagina in enumerate(doc, 1):
@@ -1477,6 +1427,7 @@ def convertir_pdf_a_imagenes(
         dst = out_dir / f"page_{i:03d}.{ext}"
         pix.save(str(dst))
         imagenes.append(str(dst))
+    doc.close()
     return imagenes
 
 
@@ -1499,6 +1450,13 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
     try:
         with TemporaryDirectory() as tmpdir:
             imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
+            import fitz
+            src_doc = fitz.open(str(pdf_in))
+            if len(imgs) != src_doc.page_count:
+                logging.warning("[WINOCR] mismatch img/páginas: forzando raster 1:1")
+                # Reintentar forzando el camino 1:1 (la función ya no usa pdfimages, así que basta con re-llamar)
+                imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
+            src_doc.close()
             for i, img in enumerate(imgs):
                 pg = src[i]
                 try:
@@ -1665,7 +1623,10 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                     pass
                 if bool(int(os.getenv("OCR_DEBUG", "0"))):
                     logging.info(f"[WINOCR:DBG] page={i+1} header_words_inserted={header_words_inserted}")
-
+                try:
+                    newp.wrap_contents()
+                except Exception:
+                    pass
         out.save(str(dst), deflate=True, garbage=3)
         return dst.exists() and dst.stat().st_size > 1024
     except Exception as e:
