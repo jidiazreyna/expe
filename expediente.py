@@ -23,17 +23,38 @@ from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
 import subprocess
 import asyncio
-# --- OCR WinRT: compatibilidad winsdk (Py 3.12+) y winrt (Py 3.8–3.11)
-# --- OCR WinRT (Windows) -----------------------------------------------
+# --- OCR WinRT (Windows): winsdk (Py 3.12+) o winrt (Py 3.8–3.11) -------
+import importlib, logging
+
+_WINOCR_OK = False
+_WINOCR_BACKEND = None
+
 try:
-    from winsdk.windows.media import ocr as winocr
-    from winsdk.windows.globalization import Language as WinLanguage
-    from winsdk.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
-    from winsdk.windows.graphics.imaging import BitmapDecoder
+    # Python 3.12+: paquete "winsdk"
+    winocr = importlib.import_module("winsdk.windows.media.ocr")
+    WinLanguage = importlib.import_module("winsdk.windows.globalization").Language
+    streams = importlib.import_module("winsdk.windows.storage.streams")
+    imaging = importlib.import_module("winsdk.windows.graphics.imaging")
+    InMemoryRandomAccessStream = streams.InMemoryRandomAccessStream
+    DataWriter = streams.DataWriter
+    BitmapDecoder = imaging.BitmapDecoder
     _WINOCR_OK = True
-except Exception:
-    _WINOCR_OK = False
-import threading
+    _WINOCR_BACKEND = "winsdk"
+except Exception as e1:
+    try:
+        # Python 3.8–3.11: paquete "winrt"
+        winocr = importlib.import_module("winrt.windows.media.ocr")
+        WinLanguage = importlib.import_module("winrt.windows.globalization").Language
+        streams = importlib.import_module("winrt.windows.storage.streams")
+        imaging = importlib.import_module("winrt.windows.graphics.imaging")
+        InMemoryRandomAccessStream = streams.InMemoryRandomAccessStream
+        DataWriter = streams.DataWriter
+        BitmapDecoder = imaging.BitmapDecoder
+        _WINOCR_OK = True
+        _WINOCR_BACKEND = "winrt"
+    except Exception as e2:
+        logging.info(f"[WINOCR] Import falló · winsdk={e1!r} · winrt={e2!r}")
+        _WINOCR_OK = False
 
 def _run_ocr_sync(png_bytes: bytes, lang_tag: str):
     """
@@ -1365,7 +1386,8 @@ def _page_has_text(pg, min_chars: int = 50) -> bool:
 async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
     stream = InMemoryRandomAccessStream()
     writer = DataWriter(stream)
-    writer.write_bytes(png_bytes)
+    from array import array
+    writer.write_bytes(array('B', png_bytes))
     await writer.store_async()
     stream.seek(0)
 
@@ -1434,11 +1456,14 @@ def convertir_pdf_a_imagenes(
 def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
     if not _WINOCR_OK:
         logging.info("[WINOCR] Paquete winsdk/winrt no disponible.")
+        if os.getenv("WINOCR_STRICT", "0").lower() in ("1","true","yes","si","sí"):
+            raise RuntimeError("WinRT OCR no disponible: instalá 'winsdk' (Py3.12) o 'winrt' (Py3.8–3.11).")
         return False
 
     import fitz  # PyMuPDF
     if not lang_tags:
         lang_tags = (os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+"))
+    logging.info(f"[WINOCR] backend={_WINOCR_BACKEND or 'none'} · langs={'+'.join(lang_tags or [])}")
 
     try:
         src = fitz.open(str(pdf_in))
@@ -4381,6 +4406,7 @@ logging.basicConfig(
     format="%(asctime)s %(message)s",
     datefmt="%H:%M:%S",
 )
+logging.info(f"[WINOCR] backend={_WINOCR_BACKEND or 'none'} · langs={os.getenv('WINOCR_LANGS','')}")
 
 import builtins as _bi
 def _print_to_log(*args, **kwargs):
