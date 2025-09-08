@@ -2272,6 +2272,105 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
             continue
 
     return mapeo
+
+
+def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
+    """Descarga informes técnicos desde la grilla y devuelve [(PDF, fecha)]."""
+    informes: list[tuple[Path, str]] = []
+    vistos: set[tuple[str, int]] = set()
+    import unicodedata
+
+    # Asegurar que la sección "Informes" esté visible (best effort)
+    try:
+        toggle = sac.locator(
+            "a[href*=\"Seccion('Informes\"], a[onclick*=\"Seccion('Informes\"], a:has-text('INFORMES')"
+        ).first
+        cont = sac.locator("div[id*='Informes']").first
+        oculto = False
+        if cont.count():
+            try:
+                oculto = cont.evaluate("el => getComputedStyle(el).display === 'none'")
+            except Exception:
+                pass
+        if oculto and toggle.count():
+            toggle.click()
+            sac.wait_for_timeout(250)
+        elif toggle.count():
+            toggle.click()
+            sac.wait_for_timeout(250)
+    except Exception:
+        pass
+
+    filas = sac.locator("table[id*='gvInformes'] tr")
+    total = filas.count() if filas else 0
+
+    for i in range(1, total):  # saltear header
+        fila = filas.nth(i)
+
+        # tipo en la segunda columna; filtrar solo "INFORMES TÉCNICOS MPF"
+        try:
+            tipo = _norm_ws(fila.locator("td").nth(1).inner_text() or "")
+        except Exception:
+            tipo = ""
+        try:
+            tipo_norm = "".join(
+                c for c in unicodedata.normalize("NFD", tipo) if unicodedata.category(c) != "Mn"
+            ).upper()
+        except Exception:
+            tipo_norm = tipo.upper()
+        if not ("INFORM" in tipo_norm and "TECNIC" in tipo_norm and "MPF" in tipo_norm):
+            continue
+
+        # fecha en la primera columna
+        try:
+            fecha = (fila.locator("td").nth(0).inner_text() or "").strip()
+        except Exception:
+            fecha = ""
+
+        # link PDF
+        file_link = fila.locator(
+            "a[href*='Ver'], a[onclick*='Ver']"
+        ).first
+        if not file_link.count():
+            continue
+
+        try:
+            with sac.expect_download() as dl:
+                try:
+                    file_link.click()
+                except Exception:
+                    file_link.evaluate("el => el.click()")
+            d = dl.value
+            destino = carpeta / d.suggested_filename
+            d.save_as(destino)
+
+            if not _is_real_pdf(destino):
+                pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
+            else:
+                pdf = destino
+
+            if pdf.suffix.lower() != ".pdf" or not pdf.exists():
+                continue
+            if _pdf_contiene_mensaje_permiso(pdf):
+                try:
+                    pdf.unlink()
+                except Exception:
+                    pass
+                continue
+
+            try:
+                key = (pdf.name, pdf.stat().st_size)
+            except Exception:
+                key = (pdf.name, 0)
+            if key in vistos:
+                continue
+            vistos.add(key)
+
+            informes.append((pdf, fecha))
+        except Exception:
+            continue
+
+    return informes
 # --------------------- Portal ? “Portal de Aplicaciones PJ” ------------
 def _open_portal_aplicaciones_pj(page):
     """
@@ -3913,6 +4012,22 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
                 bloques.append((pth, hdr))
 
+            # 5b) Informes técnicos
+            etapa("Descargando informes técnicos")
+            informes_tecnicos = _descargar_informes_tecnicos(sac, temp_dir)
+            logging.info(f"[INF] Informes técnicos descargados: {len(informes_tecnicos)}")
+            for it_path, it_fecha in informes_tecnicos:
+                pth = (
+                    it_path
+                    if it_path.suffix.lower() == ".pdf"
+                    else (_ensure_pdf_fast(it_path) if "_ensure_pdf_fast" in globals() else _ensure_pdf(it_path))
+                )
+                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                    continue
+                _mf(f"INF_TEC · {it_fecha} · {pth.name}")
+                hdr = (f"INFORME TÉCNICO · {it_fecha}") if STAMP else None
+                _push_pdf(pth, hdr)
+                logging.info(f"[MERGE] INF_TEC · {pth.name} (fecha {it_fecha})")
 
             # Helper: adjuntos de operación (Libro + Grid)
             def _agregar_adjuntos_de_op(op_id: str, titulo: str):
