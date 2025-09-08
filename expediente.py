@@ -3644,6 +3644,86 @@ def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
         pass
     return cleaned
 
+def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
+                   numero_inicial: int = 1, fijo: str | None = None) -> Path:
+    """
+    Estampa numeración de fojas (arriba-derecha) en el PDF:
+      - start_after: páginas iniciales SIN numerar (1 = dejar carátula sin número)
+      - cada_dos: si True, numera sólo una de cada dos páginas (recto)
+      - numero_inicial: valor inicial (1 por defecto)
+      - fijo: texto fijo (si querés que siempre diga p.ej. "1")
+    """
+    try:
+        import fitz  # PyMuPDF (rápido)
+        doc = fitz.open(str(pdf_in))
+        folio = numero_inicial
+        for i in range(doc.page_count):
+            if i <= (start_after - 1):
+                continue
+            if cada_dos and ((i - start_after) % 2 == 1):
+                continue  # sólo una cara por hoja
+            pg = doc[i]
+            margen = 18
+            # tamaño de letra proporcional (12–18 pt)
+            try:
+                sz = max(12, min(18, pg.rect.height * 0.018))
+            except Exception:
+                sz = 14
+            texto = fijo if fijo is not None else str(folio)
+            # medir ancho para alinear a la derecha
+            try:
+                tw = fitz.get_text_length(texto, fontname="helv", fontsize=sz)
+            except Exception:
+                tw = sz * max(1, len(texto)) * 0.6
+            x = max(margen, pg.rect.width - margen - tw)
+            y = margen + sz  # baseline desde arriba
+            pg.insert_text(fitz.Point(x, y), texto,
+                           fontsize=sz, fontname="helv", color=(0, 0, 0))
+            if fijo is None:
+                folio += 1
+        tmp = pdf_in.with_suffix(".fojas.pdf")
+        doc.save(str(tmp), deflate=True, garbage=3)
+        doc.close()
+        shutil.move(tmp, pdf_in)
+        return pdf_in
+    except Exception:
+        # Fallback con PyPDF2 + reportlab
+        r = PdfReader(str(pdf_in))
+        w = PdfWriter()
+        folio = numero_inicial
+        temps = []
+        from reportlab.pdfbase import pdfmetrics
+        for i, p in enumerate(r.pages):
+            pw = float(p.mediabox.width)
+            ph = float(p.mediabox.height)
+            if i >= start_after and (not cada_dos or ((i - start_after) % 2 == 0)):
+                tmp = Path(tempfile.mkstemp(suffix=".foja.pdf")[1])
+                c = canvas.Canvas(str(tmp), pagesize=(pw, ph))
+                sz = max(12, min(18, ph * 0.018))
+                c.setFont("Helvetica-Bold", sz)
+                texto = fijo if fijo is not None else str(folio)
+                tw = pdfmetrics.stringWidth(texto, "Helvetica-Bold", sz)
+                x = max(18, pw - 18 - tw)
+                y = ph - 18 - sz  # desde abajo, para “arriba”
+                c.drawString(x, y, texto)
+                c.save()
+                overlay = PdfReader(str(tmp)).pages[0]
+                p.merge_page(overlay)
+                temps.append(tmp)
+                if fijo is None:
+                    folio += 1
+            w.add_page(p)
+        tmpout = pdf_in.with_suffix(".fojas.pdf")
+        with open(tmpout, "wb") as f:
+            w.write(f)
+        for t in temps:
+            try:
+                Path(t).unlink()
+            except Exception:
+                pass
+        shutil.move(tmpout, pdf_in)
+        return pdf_in
+
 
 # ----------------------- DESCARGA PRINCIPAL ----------------------------
 def _env_true(name: str, default="0"):
@@ -3984,6 +4064,15 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     shutil.move(tmp_out, out)
                 except Exception:
                     logging.exception("[OCR] Falló OCR final")
+            # === FOJAS (numeración de hojas) ===
+            try:
+                # Deja la carátula (página 0) sin número, numera desde la siguiente,
+                # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
+                _agregar_fojas(out, start_after=1, cada_dos=True, numero_inicial=1)
+                logging.info("[FOJAS] Numeración de fojas aplicada")
+            except Exception as e:
+                logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
+
 
             _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques)})")
             logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques)}")
