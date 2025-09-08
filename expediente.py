@@ -1,4 +1,5 @@
-﻿#!/usr/bin/env python3
+﻿
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -23,38 +24,17 @@ from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
 import subprocess
 import asyncio
-# --- OCR WinRT (Windows): winsdk (Py 3.12+) o winrt (Py 3.8–3.11) -------
-import importlib, logging
-
-_WINOCR_OK = False
-_WINOCR_BACKEND = None
-
+# --- OCR WinRT: compatibilidad winsdk (Py 3.12+) y winrt (Py 3.8–3.11)
+# --- OCR WinRT (Windows) -----------------------------------------------
 try:
-    # Python 3.12+: paquete "winsdk"
-    winocr = importlib.import_module("winsdk.windows.media.ocr")
-    WinLanguage = importlib.import_module("winsdk.windows.globalization").Language
-    streams = importlib.import_module("winsdk.windows.storage.streams")
-    imaging = importlib.import_module("winsdk.windows.graphics.imaging")
-    InMemoryRandomAccessStream = streams.InMemoryRandomAccessStream
-    DataWriter = streams.DataWriter
-    BitmapDecoder = imaging.BitmapDecoder
+    from winsdk.windows.media import ocr as winocr
+    from winsdk.windows.globalization import Language as WinLanguage
+    from winsdk.windows.storage.streams import InMemoryRandomAccessStream, DataWriter
+    from winsdk.windows.graphics.imaging import BitmapDecoder
     _WINOCR_OK = True
-    _WINOCR_BACKEND = "winsdk"
-except Exception as e1:
-    try:
-        # Python 3.8–3.11: paquete "winrt"
-        winocr = importlib.import_module("winrt.windows.media.ocr")
-        WinLanguage = importlib.import_module("winrt.windows.globalization").Language
-        streams = importlib.import_module("winrt.windows.storage.streams")
-        imaging = importlib.import_module("winrt.windows.graphics.imaging")
-        InMemoryRandomAccessStream = streams.InMemoryRandomAccessStream
-        DataWriter = streams.DataWriter
-        BitmapDecoder = imaging.BitmapDecoder
-        _WINOCR_OK = True
-        _WINOCR_BACKEND = "winrt"
-    except Exception as e2:
-        logging.info(f"[WINOCR] Import falló · winsdk={e1!r} · winrt={e2!r}")
-        _WINOCR_OK = False
+except Exception:
+    _WINOCR_OK = False
+import threading
 
 def _run_ocr_sync(png_bytes: bytes, lang_tag: str):
     """
@@ -358,192 +338,6 @@ def _esperar_radiografia_listo(page, timeout=120):
 
     # timeout: igual seguimos, pero ya dimos tiempo razonable
     return
-
-
-def _operacion_pdf_si_permitida(sac, op_id: str, tmp_dir: Path) -> Path | None:
-    """
-    Abre el modal 'TEXTO DE LA OPERACIÓN' desde Radiografía para la operación op_id.
-    - Si el modal dice 'no tiene los permisos suficientes' => None.
-    - Si hay botón 'Imprimir' => captura el download (PDF oficial).
-    - Si no hay download => screenshot del modal -> PDF (solo lo visible).
-    """
-    import re
-
-    # Ubicar la fila por el mismo mecanismo que usamos para adjuntos (VerDecretoHtml('op_id'))
-    # Buscar el link en la página o en frames
-    fila_link = None
-    scope = sac
-    for sc in [sac] + list(sac.frames):
-        lk = sc.locator(
-            f"a[href*=\"VerDecretoHtml('{op_id}')\"], a[onclick*=\"VerDecretoHtml('{op_id}')\"]"
-        ).first
-        if lk.count():
-            fila_link = lk
-            scope = sc
-            break
-
-    if not fila_link:
-        logging.info(f"[SEC] op {op_id}: no está visible en Radiografía; se omite.")
-        return None
-
-    # Abrir el modal (click ? fallback JS directo)
-    opened = False
-    try:
-        _kill_overlays(scope)
-    except Exception:
-        pass
-
-    try:
-        fila_link.scroll_into_view_if_needed()
-    except Exception:
-        pass
-
-    try:
-        fila_link.click(force=True)
-        opened = True
-    except Exception:
-        try:
-            fila_link.evaluate(
-                "el => el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}))"
-            )
-            opened = True
-        except Exception:
-            try:
-                fila_link.evaluate("el => el.click()")
-                opened = True
-            except Exception:
-                opened = False
-
-    if not opened:
-        try:
-            scope.evaluate(
-                "id => { try { window.VerDecretoHtml && window.VerDecretoHtml(id) } catch(e){} }", op_id
-            )
-            opened = True
-        except Exception:
-            logging.info(f"[SEC] op {op_id}: no se pudo disparar VerDecretoHtml().")
-            return None
-
-    # Localizar el modal (distintas skins: ui-dialog/modal)
-    dialog = sac.locator(
-        ".ui-dialog:has-text('TEXTO DE LA OPERACIÓN'), .modal:has-text('TEXTO DE LA OPERACIÓN')"
-    ).last
-
-    try:
-        dialog.wait_for(state="visible", timeout=500)
-    except Exception:
-        logging.info(f"[SEC] op {op_id}: no apareció el modal.")
-        return None
-
-    contenido = _texto_modal_operacion(dialog, timeout=500)
-
-    if _tiene_mensaje_permiso(contenido):
-        # Cerrar modal y salir
-        try:
-            dialog.locator(".ui-dialog-titlebar-close, .close, button[aria-label='Close']").first.click()
-        except Exception:
-            pass
-        logging.info(f"[SEC] op {op_id}: acceso denegado por backend (modal).")
-        return None
-
-    # Intentar botón 'Imprimir' del modal (ícono o texto)
-    pdf_out = tmp_dir / f"op_{op_id}.pdf"
-    try:
-        imprimir = dialog.locator(
-            "button:has-text('Imprimir'), a:has-text('Imprimir'), a .fa-print, button .fa-print, [onclick*='Imprimir']"
-        ).first
-        if imprimir.count():
-            with sac.expect_download(timeout=300) as dlev:
-                try:
-                    imprimir.click()
-                except Exception:
-                    imprimir.evaluate("el => el.click()")
-            d = dlev.value
-            d.save_as(pdf_out)
-
-            if (
-                pdf_out.exists()
-                and _is_real_pdf(pdf_out)
-                and not _pdf_contiene_mensaje_permiso(pdf_out)
-            ):
-                # Cerrar modal
-                try:
-                    dialog.locator(".ui-dialog-titlebar-close, .close, button[aria-label='Close']").first.click()
-                except Exception:
-                    pass
-                return pdf_out
-    except Exception:
-        pass
-
-    # Fallback: screenshot del modal (solo lo que vos ves) ? PDF
-    try:
-        shot = tmp_dir / f"op_{op_id}.png"
-        dialog.screenshot(path=str(shot))
-        pdf = _imagen_a_pdf_fast(shot) if ' _imagen_a_pdf_fast' in globals() else _imagen_a_pdf(shot)
-        try:
-            dialog.locator(".ui-dialog-titlebar-close, .close, button[aria-label='Close']").first.click()
-        except Exception:
-            pass
-        return pdf if pdf.exists() else None
-    except Exception:
-        try:
-            dialog.locator(".ui-dialog-titlebar-close, .close, button[aria-label='Close']").first.click()
-        except Exception:
-            pass
-        logging.info(f"[SEC] op {op_id}: no se pudo capturar modal.")
-        return None
-
-
-def _session_from_context(context) -> requests.Session:
-    s = requests.Session()
-    st = context.storage_state()
-    for ck in st.get("cookies", []):
-        # Soporta proxy Teletrabajo y *.tribunales.gov.ar
-        s.cookies.set(ck["name"], ck["value"], domain=ck.get("domain"), path=ck.get("path", "/"))
-
-    # Retries razonables
-    retry = Retry(total=3, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
-    s.mount("https://", HTTPAdapter(max_retries=retry))
-    return s
-
-
-def _descubrir_template_imprimir(sac, op_id: str) -> str | None:
-    # abre modal “TEXTO DE LA OPERACIÓN”
-    link = sac.locator(
-        f"a[href*=\"VerDecretoHtml('{op_id}')\"], a[onclick*=\"VerDecretoHtml('{op_id}')\"]"
-    ).first
-    if not link.count():
-        return None
-
-    try:
-        link.click()
-    except Exception:
-        link.evaluate("el=>el.click()")
-
-    import re
-
-    dialog = sac.locator(
-        ".ui-dialog, .modal, [role='dialog'], div[id*='TextoOp'], div[id*='TextoOperacion']"
-    ).filter(has_text=re.compile(r"operaci[oó]n", re.I)).last
-
-    dialog.wait_for(state="visible", timeout=6000)
-
-    # botón imprimir:
-    btn = dialog.locator(
-        "a[href*='Imprimir'], button[onclick*='Imprimir'], a .fa-print, button .fa-print"
-    ).first
-    href = btn.get_attribute("href") or btn.get_attribute("onclick") or ""
-
-    # extrae URL “real” con helper que ya tenés
-    url = _extract_url_from_js(href) or ""
-
-    try:
-        dialog.locator(".ui-dialog-titlebar-close, .close, button[aria-label='Close']").first.click()
-    except Exception:
-        pass
-
-    # reemplazá el id por marcador
-    return re.sub(r"(idOperacion|idOp|id)=[0-9A-Za-z-]+", r"\1={ID}", url)  # GUID o número
 
 
 def _buscar_contenedor_operacion(root, op_id: str):
@@ -1308,7 +1102,7 @@ def fusionar_pdfs(lista, destino: Path):
 
 def _pdf_char_count(path: Path, paginas: int = 3) -> int:
     """
-    Cuenta caracteres de texto en las primeras `paginas` del PDF.
+    Cuenta caracteres de texto en las primeras paginas del PDF.
     Usa pdfminer si está; si no, PyPDF2. Devuelve un entero.
     """
     try:
@@ -1386,8 +1180,7 @@ def _page_has_text(pg, min_chars: int = 50) -> bool:
 async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
     stream = InMemoryRandomAccessStream()
     writer = DataWriter(stream)
-    from array import array
-    writer.write_bytes(array('B', png_bytes))
+    writer.write_bytes(png_bytes)
     await writer.store_async()
     stream.seek(0)
 
@@ -1407,12 +1200,40 @@ async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
 def convertir_pdf_a_imagenes(
     pdf_path: str | Path, out_dir: str | Path, formato: str = "png", dpi: int = 300
 ) -> list[str]:
-    """Renderiza 1 imagen por página (1:1) del PDF.
-    Preferir pdftoppm; si no existe, usar PyMuPDF (fitz).
-    Nombres: page_001.png / page_001.tiff, etc.
+    """Convierte cada página de un PDF en un archivo de imagen independiente.
+
+    Se intentará usar `pdfimages (Poppler) si está disponible en el sistema.
+    Si no se encuentra, se probará `pdftoppm. Como último recurso, se
+    utilizará PyMuPDF <https://pymupdf.readthedocs.io/>_ (`fitz).
+
+    Los archivos resultantes se nombran `page_001.png, page_002.png,
+    etc. y se guardan en `out_dir.
+
+    Parameters
+    ----------
+    pdf_path:
+        Ruta al archivo PDF de origen.
+    out_dir:
+        Directorio donde se guardarán las imágenes.
+    formato:
+        Formato de salida: `"png" (por defecto) o "tiff".
+    dpi:
+        Resolución para el renderizado cuando se utiliza PyMuPDF o `pdftoppm.
+
+    Returns
+    -------
+    list[str]
+        Lista con las rutas de las imágenes generadas.
+
+    Raises
+    ------
+    FileNotFoundError
+        Si `pdf_path no existe.
+    ValueError
+        Si `formato no es "png" ni "tiff".
+    RuntimeError
+        Si no hay herramientas disponibles para realizar la conversión.
     """
-    import subprocess, shutil
-    from pathlib import Path
 
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
@@ -1424,15 +1245,12 @@ def convertir_pdf_a_imagenes(
     formato = formato.lower()
     if formato not in {"png", "tiff"}:
         raise ValueError("formato debe ser 'png' o 'tiff'")
+
+    tmp_base = out_dir / "tmp_page"
     ext = "png" if formato == "png" else "tiff"
 
-    base = out_dir / "page"
-
-    # 1) pdftoppm (genera page-1.png, page-2.png, ...)
-    if shutil.which("pdftoppm"):
-        cmd = ["pdftoppm", f"-{ext}", "-r", str(dpi), str(pdf_path), str(base)]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        generados = sorted(out_dir.glob(f"{base.name}-*.{ext}"), key=lambda p: int(p.stem.split("-")[-1]))
+    def _renombrar_salida() -> list[str]:
+        generados = sorted(out_dir.glob(f"{tmp_base.name}*"))
         imagenes: list[str] = []
         for i, src in enumerate(generados, 1):
             dst = out_dir / f"page_{i:03d}.{ext}"
@@ -1440,8 +1258,33 @@ def convertir_pdf_a_imagenes(
             imagenes.append(str(dst))
         return imagenes
 
-    # 2) Fallback: PyMuPDF por página
-    import fitz
+    # 1) Intento: pdfimages
+    cmd = None
+    if shutil.which("pdfimages"):
+        cmd = ["pdfimages", f"-{formato}", str(pdf_path), str(tmp_base)]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return _renombrar_salida()
+        except Exception:
+            pass
+
+    # 2) Intento: pdftoppm
+    if shutil.which("pdftoppm"):
+        cmd = ["pdftoppm", f"-{formato}", "-r", str(dpi), str(pdf_path), str(tmp_base)]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return _renombrar_salida()
+        except Exception:
+            pass
+
+    # 3) Fallback: PyMuPDF
+    try:
+        import fitz
+    except Exception as e:  # pragma: no cover - se ejecuta solo si falta fitz
+        raise RuntimeError(
+            "No se encontraron 'pdfimages', 'pdftoppm' ni la librería PyMuPDF"
+        ) from e
+
     doc = fitz.open(str(pdf_path))
     imagenes: list[str] = []
     for i, pagina in enumerate(doc, 1):
@@ -1449,22 +1292,107 @@ def convertir_pdf_a_imagenes(
         dst = out_dir / f"page_{i:03d}.{ext}"
         pix.save(str(dst))
         imagenes.append(str(dst))
-    doc.close()
     return imagenes
 
-
 def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
-    if not _WINOCR_OK:
-        logging.info("[WINOCR] Paquete winsdk/winrt no disponible.")
-        if os.getenv("WINOCR_STRICT", "0").lower() in ("1","true","yes","si","sí"):
-            raise RuntimeError("WinRT OCR no disponible: instalá 'winsdk' (Py3.12) o 'winrt' (Py3.8–3.11).")
+    """
+    Aplica OCR WinRT/Windows a un PDF y agrega texto seleccionable.
+    Solo realiza OCR sobre “adjuntos” (páginas escaneadas / sin texto útil en el cuerpo).
+    Probado con PyMuPDF 1.26.4 (MuPDF 1.26.7) en Windows / Python 3.12.
+
+    ENV opcionales:
+      OCR_DEBUG=1                -> logs extra
+      OCR_INVISIBLE=0/1          -> si 1, texto invisible (no recomendado para selección)
+      OCR_VISIBLE_TEXT=1         -> fuerza texto visible
+      OCR_ROTATIONS="0,90,270"   -> rotaciones a probar
+      OCR_SCALE=2.0              -> escalado previo para OCR
+      PAGE_BODY_MIN_CHARS=50     -> umbral para “página ya tiene texto”
+      OCR_USE_OCG=0/1            -> si 1, intenta capa OCG
+      OCR_FONT="helv"            -> fuente PDF estándar a usar
+      WINOCR_LANGS="es-AR+es-ES+en-US"
+    """
+    import os, datetime, logging
+    try:
+        import fitz  # PyMuPDF
+    except Exception as e:
+        logging.info(f"[WINOCR] PyMuPDF no disponible: {e}")
         return False
 
-    import fitz  # PyMuPDF
-    if not lang_tags:
-        lang_tags = (os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+"))
-    logging.info(f"[WINOCR] backend={_WINOCR_BACKEND or 'none'} · langs={'+'.join(lang_tags or [])}")
+    # requisito externo
+    if not _WINOCR_OK:
+        logging.info("[WINOCR] Paquete winsdk/winrt no disponible.")
+        return False
 
+    # idiomas
+    if not lang_tags:
+        lang_tags = os.getenv("WINOCR_LANGS", "es-AR+es-ES+en-US").split("+")
+
+    # flags
+    dbg            = os.getenv("OCR_DEBUG", "1").lower() in ("1", "true", "yes", "on")
+    force_visible  = os.getenv("OCR_VISIBLE_TEXT", "1").lower() in ("1", "true", "yes", "on")
+    make_invisible = os.getenv("OCR_INVISIBLE", "0").lower() in ("1", "true", "yes", "on") and not force_visible
+    min_chars      = int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))
+    use_ocg        = os.getenv("OCR_USE_OCG", "0").lower() in ("1", "true", "yes", "on")
+    font_name      = os.getenv("OCR_FONT", "helv")  # fuente base PDF, no requiere incrustar
+
+    # --- helpers -----------------------------------------------------------------
+    def _shrink_font_to_fit(text: str, rect: "fitz.Rect", base_size: float) -> float:
+        """Baja font-size si el ancho del texto supera el rect. Mantiene altura."""
+        try:
+            w = fitz.get_text_length(text, fontname=font_name, fontsize=base_size)
+            if w > 0 and rect.width > 0 and w > rect.width:
+                base_size *= (rect.width / w)
+        except Exception:
+            pass
+        return max(3.5, base_size)
+
+    def _draw_word(page: "fitz.Page", rect: "fitz.Rect", text: str):
+        """Dibuja una palabra visible y seleccionable (insert_text, no textbox)."""
+        if not text:
+            return
+        h = rect.height
+        size = _shrink_font_to_fit(text, rect, base_size=max(4.0, h * 0.86))
+        baseline_y = rect.y1 - max(0.6, h * 0.08)
+        if make_invisible:
+            # Nota: algunos visores no permiten selección con render_mode=3
+            page.insert_text(
+                fitz.Point(rect.x0, baseline_y),
+                text, fontsize=size, fontname=font_name, render_mode=3, color=(0, 0, 0)
+            )
+        else:
+            page.insert_text(
+                fitz.Point(rect.x0, baseline_y),
+                text, fontsize=size, fontname=font_name, render_mode=0, color=(0, 0, 0)
+            )
+
+    def _is_attachment_page(pg: "fitz.Page") -> bool:
+        """Heurística: sin texto de cuerpo + presencia/área de imagen relevante."""
+        try:
+            if _page_has_text(pg, min_chars=min_chars):
+                return False
+        except Exception:
+            pass
+        try:
+            page_area = float(pg.rect.width * pg.rect.height)
+            d = pg.get_text("dict")
+            img_area = 0.0
+            for b in d.get("blocks", []):
+                if b.get("type") == 1 and "bbox" in b:  # imagen
+                    rect = fitz.Rect(b["bbox"])
+                    img_area += float(rect.width * rect.height)
+            # adjunto si la/s imagen/es cubren una parte importante de la página
+            if page_area > 0 and (img_area / page_area) > 0.35:
+                return True
+        except Exception:
+            pass
+        # último recurso: si no hay texto y hay al menos una imagen embebida
+        try:
+            return len(pg.get_images(full=True)) > 0
+        except Exception:
+            return True
+    # ---------------------------------------------------------------------------
+
+    # abrir
     try:
         src = fitz.open(str(pdf_in))
     except Exception as e:
@@ -1473,187 +1401,149 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
 
     out = fitz.open()
     try:
-        with TemporaryDirectory() as tmpdir:
-            imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
-            import fitz
-            src_doc = fitz.open(str(pdf_in))
-            if len(imgs) != src_doc.page_count:
-                logging.warning("[WINOCR] mismatch img/páginas: forzando raster 1:1")
-                # Reintentar forzando el camino 1:1 (la función ya no usa pdfimages, así que basta con re-llamar)
-                imgs = convertir_pdf_a_imagenes(pdf_in, tmpdir, "png", dpi=dpi)
-            src_doc.close()
-            for i, img in enumerate(imgs):
-                pg = src[i]
-                try:
-                    if _page_has_text(pg):
-                        out.insert_pdf(src, from_page=i, to_page=i)
-                        continue
-                except Exception:
-                    pass
-                dbg = bool(int(os.getenv("OCR_DEBUG", "0")))
-                # Compute body text chars and header words to decide preservation/OCR
-                try:
-                    r = pg.rect
-                    top = r.height * 0.15; bottom = r.height * 0.85; left = r.width * 0.06; right = r.width * 0.94
-                    body_chars = 0
-                    for x0,y0,x1,y1,txt,*_ in (pg.get_text("blocks") or []):
-                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
-                            continue
-                        t = (txt or "").strip()
-                        if len(t) < 8: continue
-                        body_chars += len(t)
-                    header_words = []
-                    for x0,y0,x1,y1,w,*_ in (pg.get_text("words") or []):
-                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
-                            header_words.append((x0,y0,x1,y1,w))
-                    header_text = (" ").join([w for _,_,_,_,w in header_words])
-                except Exception:
-                    body_chars = 0; header_words = []; header_text = ""
-                force_adj = (os.getenv("OCR_FORCE_ADJUNTOS", "0").lower() in ("1", "true", "yes"))
-                has_adj = ("ADJUNTO" in (header_text or "").upper())
-                preserve = (body_chars >= int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))) and (not (force_adj or has_adj))
-                if dbg:
-                    logging.info(f"[WINOCR:DBG] page={i+1} body_chars={body_chars} header_has_ADJUNTO={has_adj} preserve={preserve}")
-                if preserve:
-                    out.insert_pdf(src, from_page=i, to_page=i)
-                    continue
+        # metadatos
+        out.set_metadata({
+            "keywords": "OCR,Searchable",
+            "creator": "SACDownloader",
+            "producer": "SACDownloader",
+            "title": f"Expediente con OCR - {pdf_in.name}",
+            "creationDate": datetime.datetime.now().strftime("D:%Y%m%d%H%M%S"),
+        })
 
+        # OCG opcional (no recomendado para compatibilidad de selección)
+        ocr_layer = None
+        if use_ocg:
+            try:
+                ocr_layer = out.add_ocg("OCR Layer", on=True, intent="View")
+            except Exception as e:
+                logging.info(f"[WINOCR] add_ocg falló, sigo sin OCG: {e}")
+                ocr_layer = None
 
-                pix = fitz.Pixmap(img)
-                png_bytes = pix.tobytes("png")
-                page_w, page_h = pg.rect.width, pg.rect.height
-                img_w, img_h = pix.width, pix.height
-                sx, sy = page_w / img_w, page_h / img_h
+        # Recorrer páginas y hacer OCR SOLO en adjuntos
+        for i in range(src.page_count):
+            pg = src[i]
 
-                ocr_result = None
-                best = None; best_wc = -1; best_deg = 0; best_bytes = png_bytes
-                visible_dbg = bool(int(os.getenv("OCR_VISIBLE_DEBUG", "0")))
-                # Preprocess + rotations only when page lacks body text or header has ADJUNTO
-                do_heavy = (body_chars < int(os.getenv("PAGE_BODY_MIN_CHARS", "50"))) or has_adj
-                rots = [int(x) for x in (os.getenv("OCR_ROTATIONS", "0,90,270").split(',')) if x.strip().isdigit()] if do_heavy else [0]
-                try:
-                    from PIL import Image, ImageOps, ImageFilter
-                    import io as _io
-                    def _prep(b, deg):
-                        im = Image.open(_io.BytesIO(b)).convert('RGB')
-                        scale = float(os.getenv('OCR_SCALE', '2.0'))
-                        w,h = im.size; im = im.resize((int(w*scale), int(h*scale)));
-                        # cap max dimension to 5000 px to avoid WinRT errors
-                        mw = 5000; mh = 5000; w2,h2 = im.size;
-                        if w2>mw or h2>mh:
-                            r = min(mw/float(w2), mh/float(h2)); im = im.resize((int(w2*r), int(h2*r)))
-                        im = ImageOps.autocontrast(im)
-                        im = im.filter(ImageFilter.UnsharpMask(radius=1.0, percent=120, threshold=3))
-                        if deg:
-                            im = im.rotate(deg, expand=True)
-                        outb = _io.BytesIO(); im.save(outb, format='PNG'); return outb.getvalue()
-                except Exception:
-                    _prep = None
-                for deg in rots:
-                    for tag in lang_tags:
-                        try:
-                            data = _prep(png_bytes, deg) if _prep else png_bytes
-                            res = _run_ocr_sync(data, tag.strip())
-                            wc = 0
-                            if res and getattr(res, 'lines', None):
-                                try:
-                                    wc = sum(len(ln.words) for ln in res.lines)
-                                except Exception:
-                                    wc = 0
-                            if res and getattr(res, 'text', None) and wc > best_wc:
-                                best, best_wc, best_deg, ocr_result, best_bytes = res, wc, deg, res, data
-                        except Exception as e:
-                            logging.info(f"[WINOCR] Intento con {tag} deg={deg} falló: {e}")
-                            continue
-                if bool(int(os.getenv('OCR_DEBUG','0'))):
-                    logging.info(f"[WINOCR:DBG] page={i+1} best_deg={best_deg} best_wc={best_wc}")
-
-                # Use the image bytes that produced the best OCR for drawing and scaling
-                draw_bytes = best_bytes if (best_bytes is not None) else png_bytes
-                try:
-                    from PIL import Image as _Image
-                    import io as _io
-                    _imtmp = _Image.open(_io.BytesIO(draw_bytes))
-                    img_w, img_h = _imtmp.size
-                except Exception:
-                    img_w, img_h = pix.width, pix.height
-                sx, sy = page_w / img_w, page_h / img_h
-
+            # Si NO es adjunto -> copiar tal cual, sin OCR
+            if not _is_attachment_page(pg):
                 out.insert_pdf(src, from_page=i, to_page=i)
-                newp = out[-1]
-                newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=draw_bytes)
-                if ocr_result and ocr_result.lines:
-                    if bool(int(os.getenv("OCR_DEBUG", "0"))):
+                if dbg:
+                    logging.info(f"[WINOCR:DBG] page={i+1} sin OCR (no es adjunto)")
+                continue
+
+            # Renderizar imagen de esa página (solo para este adjunto)
+            try:
+                zoom = dpi / 72.0
+                mat = fitz.Matrix(zoom, zoom)
+                pix = pg.get_pixmap(matrix=mat, alpha=False)
+                png_bytes = pix.tobytes("png")
+                img_w, img_h = pix.width, pix.height
+            except Exception as e:
+                logging.info(f"[WINOCR] No pude rasterizar página {i+1}: {e}")
+                out.insert_pdf(src, from_page=i, to_page=i)
+                continue
+
+            page_w, page_h = float(pg.rect.width), float(pg.rect.height)
+
+            # OCR (rotaciones + preproc)
+            rots = [int(x) for x in os.getenv("OCR_ROTATIONS", "0,90,270").split(",") if x.strip().isdigit()]
+            ocr_result, best_bytes, best_wc, best_deg = None, png_bytes, -1, 0
+
+            try:
+                from PIL import Image, ImageOps, ImageFilter
+                import io as _io
+                def _prep(b, deg):
+                    im = Image.open(_io.BytesIO(b)).convert("RGB")  # sin alfa
+                    scale = float(os.getenv("OCR_SCALE", "2.0"))
+                    w, h = im.size
+                    im = im.resize((int(w * scale), int(h * scale)))
+                    mw, mh = 5000, 5000
+                    w2, h2 = im.size
+                    if w2 > mw or h2 > mh:
+                        r = min(mw / float(w2), mh / float(h2))
+                        im = im.resize((int(w2 * r), int(h2 * r)))
+                    im = ImageOps.autocontrast(im)
+                    im = im.filter(ImageFilter.UnsharpMask(radius=1.0, percent=120, threshold=3))
+                    if deg:
+                        im = im.rotate(deg, expand=True)
+                    outb = _io.BytesIO()
+                    im.save(outb, format="PNG")
+                    return outb.getvalue()
+            except Exception:
+                _prep = None
+
+            for deg in rots:
+                for tag in lang_tags:
+                    try:
+                        data = _prep(png_bytes, deg) if _prep else png_bytes
+                        res  = _run_ocr_sync(data, tag.strip())
+                        wc   = 0
+                        if res and getattr(res, "lines", None):
+                            try:
+                                wc = sum(len(ln.words) for ln in res.lines)
+                            except Exception:
+                                wc = 0
+                        if res and getattr(res, "text", None) and wc > best_wc:
+                            ocr_result, best_wc, best_deg, best_bytes = res, wc, deg, data
+                    except Exception as e:
+                        if dbg:
+                            logging.info(f"[WINOCR] OCR fallo {tag} deg={deg}: {e}")
+                        continue
+
+            if dbg:
+                logging.info(f"[WINOCR:DBG] page={i+1} (adjunto) best_deg={best_deg} best_wc={best_wc}")
+
+            # tamaño de la imagen “ganadora” (por si rotó)
+            try:
+                from PIL import Image as _Image
+                import io as _io
+                _imtmp = _Image.open(_io.BytesIO(best_bytes))
+                img_w, img_h = _imtmp.size
+            except Exception:
+                pass
+
+            # factores de escala imagen->PDF (¡sin invertir Y!)
+            sx = page_w / float(img_w)
+            sy = page_h / float(img_h)
+
+            # copiar página original
+            out.insert_pdf(src, from_page=i, to_page=i)
+            newp = out[-1]
+
+            # texto OCR seleccionable (debajo)
+            if ocr_result and getattr(ocr_result, "lines", None):
+                for line in ocr_result.lines:
+                    for word in line.words:
                         try:
-                            wc = sum(len(line.words) for line in ocr_result.lines)
-                        except Exception:
-                            wc = 0
-                        logging.info(f"[WINOCR:DBG] page={i+1} ocr_lines={len(ocr_result.lines)} ocr_words={wc}")
-                    for line in ocr_result.lines:
-                        for word in line.words:
-                            r = word.bounding_rect
+                            r = word.bounding_rect  # x,y,width,height (coords de la imagen)
                             x0 = r.x * sx
                             x1 = (r.x + r.width) * sx
-                            y0 = page_h - ((r.y + r.height) * sy)   # top-left -> bottom-left
-                            y1 = page_h - (r.y * sy)
-
-                            # 1) Clamp a la página y tamaño mínimo
-                            def _clamp(v, lo, hi): return lo if v < lo else (hi if v > hi else v)
-                            x0 = _clamp(x0, 0, page_w - 0.5)
-                            x1 = _clamp(max(x1, x0 + 0.5), 0.5, page_w)
-                            y0 = _clamp(y0, 0, page_h - 0.5)
-                            y1 = _clamp(max(y1, y0 + 0.5), 0.5, page_h)
-
+                            y0 = r.y * sy
+                            y1 = (r.y + r.height) * sy
                             rect = fitz.Rect(x0, y0, x1, y1)
+                            _draw_word(newp, rect, word.text)
+                        except Exception:
+                            continue
 
-                            # 2) Tamaño de fuente razonable: no microscópico ni gigante
-                            h = max( y1 - y0, 1.0 )
-                            fontsize = max(6, min(h * 0.9, 36))
+            # Pegar la imagen de la página *encima* (sin cuadros rojos)
+            # Usamos el render original (png_bytes) para que calce 1:1 con la página.
+            newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes, overlay=True)
 
-                            # 3) Intentar textbox; si no queda nada, caer a insert_text
-                            try:
-                                # Nota: muchas versiones devuelven 0 si no se pudo ubicar texto
-                                rc = newp.insert_textbox(
-                                    rect, word.text or "",
-                                    fontsize=fontsize, fontname="helv",
-                                    render_mode=(0 if visible_dbg else 3)
-                                )
-                                if not rc:  # 0 / None / False -> no se insertó
-                                    newp.insert_text(
-                                        (x0, y1), word.text or "",
-                                        fontsize=fontsize, fontname="helv",
-                                        render_mode=(0 if visible_dbg else 3)
-                                    )
-                            except Exception:
-                                newp.insert_text(
-                                    (x0, y1), word.text or "",
-                                    fontsize=fontsize, fontname="helv",
-                                    render_mode=(0 if visible_dbg else 3)
-                                )
-                # Reinstate header/footer words as invisible text to keep acápite selectable
-                header_words_inserted = 0
-                try:
-                    r = pg.rect
-                    top = r.height * 0.15; bottom = r.height * 0.85; left = r.width * 0.06; right = r.width * 0.94
-                    for x0, y0, x1, y1, w, *rest in (pg.get_text("words") or []):
-                        if (y1 <= top) or (y0 >= bottom) or (x1 <= left) or (x0 >= right):
-                            rect = fitz.Rect(x0, y0, x1, y1)
-                            fontsize = max(4, (y1 - y0) * 0.9)
-                            try:
-                                newp.insert_textbox(rect, w or "", fontsize=fontsize, render_mode=3)
-                            except Exception:
-                                newp.insert_text((x0, y1), w or "", fontsize=fontsize, render_mode=3)
-                            header_words_inserted += 1
-                except Exception:
-                    pass
-                if bool(int(os.getenv("OCR_DEBUG", "0"))):
-                    logging.info(f"[WINOCR:DBG] page={i+1} header_words_inserted={header_words_inserted}")
-                try:
-                    newp.wrap_contents()
-                except Exception:
-                    pass
+            # normalizar recursos/XObjects
+            try:
+                newp.wrap_contents()
+            except Exception:
+                pass
+
         out.save(str(dst), deflate=True, garbage=3)
-        return dst.exists() and dst.stat().st_size > 1024
+        ok = dst.exists() and dst.stat().st_size > 1024
+        if ok and dbg:
+            try:
+                logging.info(f"[WINOCR:DBG] OCGS: {out.get_ocgs()}")
+                logging.info(f"[WINOCR:DBG] UI:   {out.layer_ui_configs()}")
+            except Exception:
+                pass
+        return ok
+
     except Exception as e:
         logging.info(f"[WINOCR] Error procesando PDF: {e}")
         return False
@@ -1667,9 +1557,6 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
         except Exception:
             pass
 
-
-
-
 def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     """
     OCR con Windows WinRT.
@@ -1679,7 +1566,7 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
     - WINOCR_LANGS="es-AR+es-ES+en-US"
     - OCR_DPI=300 (por default)
     """
-    mode = (os.getenv("OCR_MODE", "") or "").lower() or "auto"
+    mode = (os.getenv("OCR_MODE", "auto") or "").lower() or "auto"
     if mode == "off":
         return pdf_in
 
@@ -2219,141 +2106,6 @@ def _abrir_libro(sac, intra_user=None, intra_pass=None, nro_exp=None):
     return _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp)
 
 
-def _recorrer_indice_libro(libro):
-    """
-    Clickea cada entrada del índice del Libro para forzar la carga de todas las fojas en el visor.
-    Tolera índice colapsado, ajax y re-render.
-    """
-    # Asegurar que se vea el índice (algunas skins lo colapsan bajo una pestaña "Índice")
-    try:
-        if libro.locator("#indice").count() == 0:
-            libro.get_by_text(re.compile(r"índice", re.I)).first.click()
-            libro.wait_for_timeout(200)
-    except Exception:
-        pass
-
-    # Selector robusto de links del índice (según tu HTML: onclick=onItemClick(...))
-    sel_links = "a[onclick*='onItemClick'], #indice a, .nav a"
-    visitados = set()
-    orden = []
-    max_pasadas = 50  # por si hay re-render/virtualización
-
-    for _ in range(max_pasadas):
-        loc = libro.locator(sel_links)
-        n = loc.count()
-        nuevos = []
-        for i in range(n):
-            a = loc.nth(i)
-            try:
-                txt = (a.inner_text() or "").strip()
-            except Exception:
-                txt = ""
-            href = a.get_attribute("href") or ""
-            oc = a.get_attribute("onclick") or ""
-            key = (txt, href, oc)
-            if key not in visitados:
-                nuevos.append((i, key))
-
-        if not nuevos:
-            break
-
-        for i, key in nuevos:
-            a = loc.nth(i)
-            try:
-                a.scroll_into_view_if_needed()
-            except Exception:
-                pass
-            # click normal ? fallback a click JS
-            try:
-                a.click(timeout=1500)
-            except Exception:
-                try:
-                    a.evaluate("el => el.click()")
-                except Exception:
-                    pass
-            visitados.add(key)
-
-            # pequeño respiro para que la foja cargue en el panel derecho
-            libro.wait_for_timeout(120)
-
-        # scrollear el contenedor del índice para revelar más elementos
-        try:
-            if libro.locator("#indice").count():
-                libro.eval_on_selector("#indice", "(el)=>el.scrollBy(0, el.clientHeight)")
-            else:
-                libro.mouse.wheel(0, 900)
-        except Exception:
-            pass
-
-    # un último respiro antes del PDF
-    libro.wait_for_timeout(300)
-
-
-# ----------------- Capturar UNA operación a PDF -----------------
-from PIL import Image
-
-
-def _capturar_operacion_a_pdf(libro, op_id: str, tmp_dir: Path) -> Path | None:
-    # usar el frame/página que realmente contiene el Libro
-    S = _libro_scope(libro)
-    cont = _buscar_contenedor_operacion(S, op_id)
-    if not cont:
-        return None
-    try:
-        cont.wait_for(state="visible", timeout=5000)
-    except Exception:
-        return None
-
-    # Normalización básica para que no haya sticky/overflow raros
-    try:
-        S.evaluate(
-            """
-            (id) => {
-                const sel = `[id='${id}'], [data-codigo='${id}']`;
-                const el = document.querySelector(sel);
-                if (!el) return;
-                el.style.overflow = 'visible';
-                el.style.maxHeight = 'unset';
-                el.style.height = 'auto';
-                el.style.transform = 'none';
-                el.style.zoom = 'unset';
-                el.querySelectorAll('*').forEach(n => {
-                    const cs = getComputedStyle(n);
-                    if (/(sticky|fixed)/.test(cs.position)) n.style.position = 'static';
-                    if (/(auto|scroll|hidden)/.test(cs.overflowY)) n.style.overflow = 'visible';
-                    if (n.style.maxHeight && n.style.maxHeight !== 'none') n.style.maxHeight = 'unset';
-                });
-            }
-            """,
-            op_id,
-        )
-    except Exception:
-        pass
-
-    # ? Captura directa del elemento (rápida)
-    elem_png = tmp_dir / f"op_{op_id}.png"
-    try:
-        cont.scroll_into_view_if_needed()
-    except Exception:
-        pass
-
-    try:
-        cont.screenshot(path=str(elem_png), animations="disabled", caret="hide", timeout=120_000)
-        return _imagen_a_pdf(elem_png)
-    except Exception:
-        # Fallback: clip al bounding box
-        bb = cont.bounding_box()
-        if not bb:
-            return None
-        clip_png = tmp_dir / f"op_{op_id}_clip.png"
-        S.screenshot(
-            path=str(clip_png),
-            clip={"x": bb["x"], "y": bb["y"], "width": bb["width"], "height": bb["height"]},
-            animations="disabled",
-            caret="hide",
-            timeout=120_000,
-        )
-        return _imagen_a_pdf(clip_png)
 
 
 def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[Path]:
@@ -4406,7 +4158,6 @@ logging.basicConfig(
     format="%(asctime)s %(message)s",
     datefmt="%H:%M:%S",
 )
-logging.info(f"[WINOCR] backend={_WINOCR_BACKEND or 'none'} · langs={os.getenv('WINOCR_LANGS','')}")
 
 import builtins as _bi
 def _print_to_log(*args, **kwargs):
@@ -4452,14 +4203,3 @@ if __name__ == "__main__":
     App(root)
     root.mainloop()
 # Nota: Al ejecutar con OCR_MODE=force, los adjuntos siempre salen con capa de texto.
-
-
-
-
-
-
-
-
-
-
-
