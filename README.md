@@ -1,5 +1,7 @@
 # expe
 
+Herramienta para descargar expedientes del SAC, adjuntos e informes técnicos MPF.
+
 ## Empaquetado
 
 Ejemplo con PyInstaller:
