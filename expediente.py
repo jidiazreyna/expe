@@ -2273,77 +2273,184 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
 
     return mapeo
 
+def _mapear_fechas_operaciones_radiografia(sac) -> tuple[dict[str, str], list[str]]:
+    """
+    Lee la grilla de Operaciones en Radiografía y devuelve:
+      - dict { op_id -> 'dd/mm/aaaa' }
+      - lista de fechas únicas en el ORDEN en que aparecen en la grilla (para intercalar cronológicamente)
+    """
+    import re
+    fechas_por_op: dict[str, str] = {}
+    orden_fechas: list[str] = []
 
-def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
-    """Descarga informes técnicos desde la grilla y devuelve [(PDF, fecha)]."""
-    informes: list[tuple[Path, str]] = []
-    vistos: set[tuple[str, int]] = set()
-    import unicodedata
-
-    # Asegurar que la sección "Informes" esté visible (best effort)
-    try:
-        toggle = sac.locator(
-            "a[href*=\"Seccion('Informes\"], a[onclick*=\"Seccion('Informes\"], a:has-text('INFORMES')"
-        ).first
-        cont = sac.locator("div[id*='Informes']").first
-        oculto = False
-        if cont.count():
-            try:
-                oculto = cont.evaluate("el => getComputedStyle(el).display === 'none'")
-            except Exception:
-                pass
-        if oculto and toggle.count():
-            toggle.click()
-            sac.wait_for_timeout(250)
-        elif toggle.count():
-            toggle.click()
-            sac.wait_for_timeout(250)
-    except Exception:
-        pass
-
-    filas = sac.locator("table[id*='gvInformes'] tr")
+    filas = sac.locator("#cphDetalle_gvOperaciones tr, table[id*='gvOperaciones'] tr")
     total = filas.count() if filas else 0
+    if total <= 1:
+        return fechas_por_op, orden_fechas
 
-    for i in range(1, total):  # saltear header
+    for i in range(1, total):
         fila = filas.nth(i)
-
-        # tipo en la segunda columna; filtrar solo "INFORMES TÉCNICOS MPF"
+        # op_id
+        link = fila.locator("a[href*='VerDecretoHtml'], a[onclick*='VerDecretoHtml']").first
+        if not link.count():
+            continue
         try:
-            tipo = _norm_ws(fila.locator("td").nth(1).inner_text() or "")
+            href = link.get_attribute("href") or ""
+            oc = link.get_attribute("onclick") or ""
+            m = re.search(r"VerDecretoHtml\('([^']+)'\)", href + " " + oc)
+            if not m:
+                continue
+            op_id = m.group(1)
         except Exception:
-            tipo = ""
-        try:
-            tipo_norm = "".join(
-                c for c in unicodedata.normalize("NFD", tipo) if unicodedata.category(c) != "Mn"
-            ).upper()
-        except Exception:
-            tipo_norm = tipo.upper()
-        if not ("INFORM" in tipo_norm and "TECNIC" in tipo_norm and "MPF" in tipo_norm):
             continue
 
-        # fecha en la primera columna
+        # fecha (buscar en celdas con patrón dd/mm/aaaa)
+        fecha = ""
         try:
-            fecha = (fila.locator("td").nth(0).inner_text() or "").strip()
+            celdas = fila.locator("td")
+            ntd = celdas.count()
+            for j in range(ntd):
+                try:
+                    txt = _norm_ws(celdas.nth(j).inner_text() or "")
+                except Exception:
+                    continue
+                m2 = re.search(r"\b\d{2}/\d{2}/\d{4}\b", txt)
+                if m2:
+                    fecha = m2.group(0)
+                    break
         except Exception:
             fecha = ""
 
-        # link PDF
-        file_link = fila.locator(
-            "a[href*='Ver'], a[onclick*='Ver']"
-        ).first
-        if not file_link.count():
+        if fecha:
+            fechas_por_op[op_id] = fecha
+            if not orden_fechas or orden_fechas[-1] != fecha:
+                orden_fechas.append(fecha)
+
+    return fechas_por_op, orden_fechas
+
+def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
+    """
+    Descarga informes técnicos desde la sección 'INFORMES TÉCNICOS MPF' y devuelve [(PDF, fecha_mov)].
+    - Expande SOLO esa sección (no toca 'Adjuntos').
+    - Busca / espera la grilla correcta en el frame donde esté.
+    - Click en ícono PDF (javascript:VerInformeMPF(...)).
+    - Extrae 'Fecha Movimiento' de la fila (dd/mm/aaaa).
+    """
+    import re
+    informes: list[tuple[Path, str]] = []
+    vistos: set[tuple[str, int]] = set()
+
+    def _scopes(pg):
+        try:
+            return [pg] + list(pg.frames)
+        except Exception:
+            return [pg]
+
+    # 1) Localizar y abrir la sección en el frame correcto
+    grid_scope = None
+    for sc in _scopes(sac):
+        cont = sc.locator("#divInformesTecnicosMPF").first
+        if cont.count():
+            grid_scope = sc
+            try:
+                visible = cont.evaluate("el => getComputedStyle(el).display !== 'none'")
+            except Exception:
+                visible = False
+            if not visible:
+                # a) función nativa
+                try:
+                    sc.evaluate("() => { try { if (window.Seccion) Seccion('InformesTecnicosMPF'); } catch(e){} }")
+                except Exception:
+                    pass
+                # b) ícono específico de ESTA sección
+                try:
+                    btn = sc.locator("#imgInformesTecnicosMPF").first
+                    if btn.count():
+                        try: btn.scroll_into_view_if_needed()
+                        except Exception: pass
+                        try: btn.click()
+                        except Exception: btn.evaluate("el=>el.click()")
+                except Exception:
+                    pass
+            break
+
+    # Si no encontramos el contenedor, probamos con el anchor exacto en cualquier frame
+    if grid_scope is None:
+        for sc in _scopes(sac):
+            a = sc.locator(
+                "a[href*=\"Seccion('InformesTecnicosMPF')\"], a[onclick*=\"Seccion('InformesTecnicosMPF')\"]"
+            ).first
+            if a.count():
+                try:
+                    try: a.scroll_into_view_if_needed()
+                    except Exception: pass
+                    try: a.click()
+                    except Exception: a.evaluate("el=>el.click()")
+                except Exception:
+                    pass
+                grid_scope = sc
+                break
+
+    if grid_scope is None:
+        grid_scope = sac  # último recurso: main page
+
+    # 2) Esperar la grilla correcta en ESE scope (evita confundir con 'Adjuntos')
+    filas = None
+    for _ in range(20):  # ~3s
+        filas = grid_scope.locator("table[id*='gvInformesTecnicosMPF'] tr")
+        try:
+            if filas and filas.count() > 1:
+                break
+        except Exception:
+            pass
+        try:
+            grid_scope.wait_for_timeout(150)
+        except Exception:
+            break
+
+    total = filas.count() if filas else 0
+    if total <= 1:
+        return informes  # sin filas
+
+    # 3) Recorrer filas (salteando header)
+    for i in range(1, total):
+        fila = filas.nth(i)
+
+        # Link del PDF (ícono Adobe dentro de <a>)
+        link = fila.locator("a[href*='VerInformeMPF'], a[onclick*='VerInformeMPF']").first
+        if not link.count():
+            link = fila.locator("img[src*='Adobe']").locator("xpath=ancestor::a[1]").first
+        if not link.count():
             continue
 
+        # Fecha Movimiento: primer dd/mm/aaaa en la fila
+        fecha = ""
         try:
-            with sac.expect_download() as dl:
+            celdas = fila.locator("td")
+            for j in range(celdas.count()):
                 try:
-                    file_link.click()
+                    txt = _norm_ws(celdas.nth(j).inner_text() or "")
                 except Exception:
-                    file_link.evaluate("el => el.click()")
+                    continue
+                m = re.search(r"\b\d{2}/\d{2}/\d{4}\b", txt)
+                if m:
+                    fecha = m.group(0)
+                    break
+        except Exception:
+            fecha = ""
+
+        # Click -> download
+        try:
+            with grid_scope.expect_download(timeout=20000) as dl:
+                try:
+                    link.click()
+                except Exception:
+                    link.evaluate("el => el.click()")
             d = dl.value
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
 
+            # Normalizar / validar PDF
             if not _is_real_pdf(destino):
                 pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
             else:
@@ -2352,16 +2459,11 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             if pdf.suffix.lower() != ".pdf" or not pdf.exists():
                 continue
             if _pdf_contiene_mensaje_permiso(pdf):
-                try:
-                    pdf.unlink()
-                except Exception:
-                    pass
+                try: pdf.unlink()
+                except Exception: pass
                 continue
 
-            try:
-                key = (pdf.name, pdf.stat().st_size)
-            except Exception:
-                key = (pdf.name, 0)
+            key = (pdf.name, pdf.stat().st_size if pdf.exists() else 0)
             if key in vistos:
                 continue
             vistos.add(key)
@@ -2371,6 +2473,70 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             continue
 
     return informes
+
+
+def _extraer_adjuntos_embebidos(pdf_in: Path, out_dir: Path) -> list[Path]:
+    """
+    Extrae archivos embebidos / adjuntos de un PDF (PyMuPDF o pikepdf si está disponible).
+    Devuelve lista de paths extraídos.
+    """
+    extraidos: list[Path] = []
+    # PyMuPDF primero (rápido y suele venir instalado)
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(str(pdf_in))
+        # nombres segun versión
+        try:
+            names = list(doc.embedded_file_names())
+        except Exception:
+            try:
+                names = list(doc.embeddedFileNames())
+            except Exception:
+                names = []
+        for name in names:
+            try:
+                # obtener bytes
+                try:
+                    data = doc.embedded_file_get(name)
+                except Exception:
+                    data = doc.embeddedFileGet(name)  # compat
+                if not data:
+                    continue
+                dst = out_dir / Path(name).name
+                with open(dst, "wb") as f:
+                    f.write(data if isinstance(data, (bytes, bytearray)) else bytes(data))
+                extraidos.append(dst)
+            except Exception:
+                continue
+        try: doc.close()
+        except Exception: pass
+        if extraidos:
+            return extraidos
+    except Exception:
+        pass
+
+    # Fallback: pikepdf
+    try:
+        import pikepdf
+        with pikepdf.open(str(pdf_in)) as pdf:
+            try:
+                # pikepdf >=7
+                for fname, fs in pdf.attachments.items():
+                    dst = out_dir / Path(fname).name
+                    fs.extract_to(dst)
+                    extraidos.append(dst)
+            except Exception:
+                # Manual: recorrer EmbeddedFiles
+                af = pdf.open_outline_root()
+                # si no está, omitimos
+                pass
+    except Exception:
+        pass
+
+    return extraidos
+
+
+
 # --------------------- Portal ? “Portal de Aplicaciones PJ” ------------
 def _open_portal_aplicaciones_pj(page):
     """
@@ -3940,6 +4106,10 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 )
                 return
             # <<< FIN GATE DESDE RADIOGRAFÍA >>>
+            # === NUEVO: fechas por operación para ordenar cronológicamente ===
+            op_fecha_map, orden_fechas = _mapear_fechas_operaciones_radiografia(sac)
+            from collections import defaultdict
+            timeline = defaultdict(list)   # { 'dd/mm/aaaa' -> [(path, header), ...] }
 
             # 3) Abrir Libro y listar operaciones VISIBLES (sin forzar)
             etapa("Abriendo 'Expediente como Libro'")
@@ -3987,8 +4157,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 f"{ {k: len(v) for k, v in pdfs_grid.items()} }"
             )
 
-            # Helper: normaliza/estampa/dedup y agrega al merge
-            def _push_pdf(pth: Path, hdr: str | None):
+            def _push_pdf(pth: Path, hdr: str | None, fecha: str | None):
                 if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                     return
                 try:
@@ -3999,23 +4168,21 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     return
                 ya_agregados.add(key)
 
-
-
-                # Limpieza de páginas en blanco (si falla, seguimos con el archivo tal cual)
+                # Limpieza de páginas en blanco (best-effort)
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
                     pass
-
                 if not pth or not Path(pth).exists():
                     return
 
-                bloques.append((pth, hdr))
-
+                timeline[(fecha or "__NOFECHA__")].append((pth, hdr))
+                
             # 5b) Informes técnicos
             etapa("Descargando informes técnicos")
             informes_tecnicos = _descargar_informes_tecnicos(sac, temp_dir)
             logging.info(f"[INF] Informes técnicos descargados: {len(informes_tecnicos)}")
+
             for it_path, it_fecha in informes_tecnicos:
                 pth = (
                     it_path
@@ -4026,17 +4193,18 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     continue
                 _mf(f"INF_TEC · {it_fecha} · {pth.name}")
                 hdr = (f"INFORME TÉCNICO · {it_fecha}") if STAMP else None
-                _push_pdf(pth, hdr)
+                _push_pdf(pth, hdr, fecha=it_fecha)  # <- intercalado por fecha
                 logging.info(f"[MERGE] INF_TEC · {pth.name} (fecha {it_fecha})")
 
             # Helper: adjuntos de operación (Libro + Grid)
-            def _agregar_adjuntos_de_op(op_id: str, titulo: str):
+            def _agregar_adjuntos_de_op(op_id: str, titulo: str, fecha_op: str | None):
                 pdfs_op: list[Path] = []
                 try:
                     pdfs_op.extend(_descargar_adjuntos_de_operacion(libro, op_id, temp_dir))
                 except Exception:
                     pass
                 pdfs_op.extend(pdfs_grid.get(op_id, []))
+
                 for ap in pdfs_op:
                     pth = (
                         ap
@@ -4047,33 +4215,40 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         continue
                     _mf(f"ADJUNTO · {titulo} · {pth.name}")
                     hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    _push_pdf(pth, hdr)
+                    _push_pdf(pth, hdr, fecha=fecha_op)  # <- intercalado por fecha
                     logging.info(f"[MERGE] ADJ · {pth.name} (op {op_id})")
 
             # 6) Operaciones (como antes): render por páginas, PERO sólo si están visibles
             op_pdfs_capturados = 0
             etapa("Procesando operaciones visibles del Libro")
+
             for o in ops:
                 op_id = o["id"]
                 op_tipo = o["tipo"]
                 titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
+                # <- fecha desde la grilla
+                fecha_op = op_fecha_map.get(op_id) if 'op_fecha_map' in locals() else None
+
                 logging.info(
-                    f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}'"
+                    f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · "
+                    f"titulo='{titulo}' · fecha='{fecha_op or '-'}'"
                 )
 
                 # Mostrar y chequear visibilidad real del contenedor de la operación
                 _mostrar_operacion(libro, op_id, op_tipo)
                 S = _libro_scope(libro)
                 cont = _buscar_contenedor_operacion(S, op_id)
+
                 if not cont:
-                    return None
+                    logging.info(f"[OP] {op_id}: contenedor no encontrado; se continúa con adjuntos.")
+                    _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
+                    continue
+
                 visible = False
                 try:
                     if cont.count() and cont.is_visible():
                         bb = cont.bounding_box()
-                        visible = bool(
-                            bb and bb.get("width", 0) > 40 and bb.get("height", 0) > 40
-                        )
+                        visible = bool(bb and bb.get("width", 0) > 40 and bb.get("height", 0) > 40)
                 except Exception:
                     visible = False
 
@@ -4081,10 +4256,10 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     logging.info(
                         f"[OP] {op_id}: contenedor no visible ? se omite render de operación (se agregan adjuntos igual)."
                     )
-                    _agregar_adjuntos_de_op(op_id, titulo)
+                    _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
                     continue
 
-                # Render “viejo” por HTML ? PDF (NO reemplazado)
+                # Render “viejo” por HTML → PDF
                 try:
                     pdf_op = _render_operacion_a_pdf_paginas(libro, op_id, context, p, temp_dir)
                 except Exception as e:
@@ -4093,16 +4268,16 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
                 if pdf_op and pdf_op.exists():
                     _mf(f"OPERACION · {titulo} · {pdf_op.name}")
-                    _push_pdf(pdf_op, None)  # sin header en operaciones
+                    _push_pdf(pdf_op, None, fecha=fecha_op)  # <- intercalado por fecha
                     op_pdfs_capturados += 1
                     logging.info(f"[OP] {op_id}: agregado (renderer de páginas)")
                 else:
-                    logging.info(
-                        f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos)."
-                    )
+                    logging.info(f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos).")
 
-                # Adjuntos de esta operación
-                _agregar_adjuntos_de_op(op_id, titulo)
+                # Adjuntos de esta operación (con la misma fecha de la operación)
+                _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
+
+
 
             # 7) Fallback del Libro (mantener _imprimir... / _guardar... ? _convertir...) si no hubo ninguna operación
             if op_pdfs_capturados == 0:
@@ -4141,6 +4316,28 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     hdr = ("ADJUNTO · (sin operación)") if STAMP else None
                     _push_pdf(pth, hdr)
 
+            # === Consolidar 'bloques' desde el timeline en orden cronológico ===
+            # 1) Fechas en el orden de la grilla de operaciones (si existe)
+            for f in orden_fechas:
+                for (pth, hdr) in timeline.get(f, []):
+                    bloques.append((pth, hdr))
+
+            # 2) Fechas adicionales que aparezcan sólo en informes técnicos (no en operaciones)
+            fechas_extra = [f for f in timeline.keys() if f not in orden_fechas and f != "__NOFECHA__"]
+            # Ordenarlas como fechas reales si están en formato dd/mm/aaaa; si no, lexicográfico estable
+            try:
+                from datetime import datetime as _dt
+                fechas_extra.sort(key=lambda s: _dt.strptime(s, "%d/%m/%Y"))
+            except Exception:
+                fechas_extra.sort()
+
+            for f in fechas_extra:
+                for (pth, hdr) in timeline.get(f, []):
+                    bloques.append((pth, hdr))
+
+            # 3) Sin fecha (al final)
+            for (pth, hdr) in timeline.get("__NOFECHA__", []):
+                bloques.append((pth, hdr))
 
             if not bloques:
                 raise RuntimeError(
