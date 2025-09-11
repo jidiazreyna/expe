@@ -554,7 +554,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         import fitz  # PyMuPDF
     except Exception:
         # Sin PyMuPDF: fusion simple sin indice
-        return fusionar_bloques_inline(bloques, destino)
+        fusionar_bloques_inline(bloques, destino)
+        return 0
 
     dst = fitz.open()
     margin = 18
@@ -580,7 +581,11 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         src.close()
 
         # Titulo para el indice
-        title_for_toc = (str(toc_title).strip() if toc_title else (str(header_text).strip() if header_text else Path(pdf_path).name))
+        title_for_toc = (
+            str(toc_title).strip()
+            if toc_title
+            else (str(header_text).strip() if header_text else Path(pdf_path).name)
+        )
         items_info.append((title_for_toc, start))
 
         if header_text:
@@ -593,43 +598,69 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     width=1,
                 )
                 try:
-                    page.insert_text((margin + 10, rect.height - margin + 2), title, fontname="helv", fontsize=12)
+                    page.insert_text(
+                        (margin + 10, rect.height - margin + 2),
+                        title,
+                        fontname="helv",
+                        fontsize=12,
+                    )
                 except Exception:
                     page.insert_text((margin + 10, rect.height - margin + 2), title, fontsize=12)
 
+    idx_page_count = 0
     # Insertar indice interactivo despues de la caratula
     if dst.page_count > 0 and len(items_info) > 1:
         try:
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
-            def _foja_for_page(p: int):
-                if p < 2:
-                    return None
-                if (p - 2) % 2 == 1:
-                    p = p + 1
-                return 1 + ((p - 2) // 2)
-            def _new_index_page():
-                return dst.new_page(pno=1, width=pw, height=ph)
-            y = ph - margin - 28
+
+            entries = items_info[1:]
+            fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
-            fs = 12
-            idx_page = _new_index_page()
+            y_start = ph - margin - 28
+
+            def _calc_pages(n_items: int) -> int:
+                y = y_start
+                pages = 1
+                for _ in range(n_items):
+                    if y < margin + 24:
+                        pages += 1
+                        y = y_start
+                    y -= fs + 8
+                return pages
+
+            idx_page_count = _calc_pages(len(entries))
+
+            index_pages = [
+                dst.new_page(pno=1 + i, width=pw, height=ph) for i in range(idx_page_count)
+            ]
+
+            def _foja_for_page(p: int):
+                skip = 1 + idx_page_count
+                if p < skip:
+                    return None
+                return 1 + ((p - skip) // 2)
+
+            page_idx = 0
+            idx_page = index_pages[page_idx]
             try:
-                idx_page.insert_text((x_left, y + 10), index_title, fontsize=16)
+                idx_page.insert_text((x_left, y_start + 10), index_title, fontsize=16)
             except Exception:
                 pass
-            y -= 22
-            for title, start_page in items_info[1:]:
-                target_page = start_page + 1  # shift by 1 due to inserted index page
+            y = y_start - 22
+
+            for title, start_page in entries:
                 if y < margin + 24:
-                    idx_page = _new_index_page()
-                    y = ph - margin - 28
+                    page_idx += 1
+                    idx_page = index_pages[page_idx]
                     try:
-                        idx_page.insert_text((x_left, y + 10), index_title + " (cont.)", fontsize=16)
+                        idx_page.insert_text(
+                            (x_left, y_start + 10), index_title + " (cont.)", fontsize=16
+                        )
                     except Exception:
                         pass
-                    y -= 22
+                    y = y_start - 22
                 t = str(title)[:120]
                 idx_page.insert_text((x_left, y), t, fontsize=fs)
                 # calcular ancho del titulo
@@ -637,6 +668,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
                 except Exception:
                     tw_title = fs * max(1, len(t)) * 0.6
+                target_page = start_page + idx_page_count
                 fj = _foja_for_page(target_page)
                 fj_txt = str(fj) if fj is not None else "-"
                 try:
@@ -657,10 +689,14 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs * 0.4)
                 try:
-                    idx_page.insert_link({"kind": fitz.LINK_GOTO, "page": target_page, "from": link_rect})
+                    idx_page.insert_link(
+                        {"kind": fitz.LINK_GOTO, "page": target_page, "from": link_rect}
+                    )
                 except Exception:
                     try:
-                        idx_page.insert_link({"kind": fitz.LINK_GOTO, "page": target_page, "rect": link_rect})
+                        idx_page.insert_link(
+                            {"kind": fitz.LINK_GOTO, "page": target_page, "rect": link_rect}
+                        )
                     except Exception:
                         pass
                 y -= fs + 8
@@ -676,6 +712,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         logging.info(f"[MERGE:DONE/INDICE] {destino.name}")
     except Exception:
         pass
+    return idx_page_count
 
 def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bool = True) -> list[str]:
     """
@@ -5456,7 +5493,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 pass
 
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
-            fusionar_bloques_con_indice(bloques_final, out, index_title="INDICE")
+            idx_pages = fusionar_bloques_con_indice(bloques_final, out, index_title="INDICE")
 
             # Intentar aplicar OCR al PDF final
             ocr_out = _maybe_ocr(out)
@@ -5486,9 +5523,14 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
             # === FOJAS (numeración de hojas) ===
             try:
-                # Deja la carátula (página 0) sin número; numera desde la siguiente,
+                # Deja la carátula y el índice sin número; numera desde la siguiente,
                 # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
-                _agregar_fojas(out, start_after=2, cada_dos=True, numero_inicial=1)
+                _agregar_fojas(
+                    out,
+                    start_after=1 + idx_pages,
+                    cada_dos=True,
+                    numero_inicial=1,
+                )
                 logging.info("[FOJAS] Numeración de fojas aplicada")
             except Exception as e:
                 logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
