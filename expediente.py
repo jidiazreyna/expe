@@ -2,8 +2,8 @@
 # -*- coding: cp1252 -*-
 
 """
-Descarga un expediente del SAC (vía Teletrabajo -> Portal de Aplicaciones -> Intranet),
-adjuntos incluidos, y arma un único PDF.
+Descarga un expediente del SAC (vÃ­a Teletrabajo -> Portal de Aplicaciones -> Intranet),
+adjuntos incluidos, y arma un Ãºnico PDF.
 """
 
 import os, sys, tempfile, shutil, datetime, threading, re, logging
@@ -23,7 +23,7 @@ from tkinter.scrolledtext import ScrolledText
 from tempfile import TemporaryDirectory
 import subprocess
 import asyncio
-# --- OCR WinRT: compatibilidad winsdk (Py 3.12+) y winrt (Py 3.8–3.11)
+# --- OCR WinRT: compatibilidad winsdk (Py 3.12+) y winrt (Py 3.8â€“3.11)
 # --- OCR WinRT (Windows) -----------------------------------------------
 try:
     from winsdk.windows.media import ocr as winocr
@@ -76,7 +76,7 @@ if getattr(sys, "frozen", False):  # ejecutable .exe
 else:  # .py suelto
     BASE_PATH = Path(__file__).parent
 
-# Playwright buscará el navegador empaquetado aquí (portabiliza el .exe)
+# Playwright buscarÃ¡ el navegador empaquetado aquÃ­ (portabiliza el .exe)
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BASE_PATH / "ms-playwright")
 
 from requests.adapters import HTTPAdapter
@@ -100,7 +100,7 @@ def _norm_ws(s: str) -> str:
 
 
 def _tiene_mensaje_permiso(texto: str) -> bool:
-    # detectar el mensaje aunque esté rodeado de otros textos (p. ej. título del modal)
+    # detectar el mensaje aunque estÃ© rodeado de otros textos (p. ej. tÃ­tulo del modal)
     import unicodedata, re
 
     t = _norm_ws(texto or "").lower()
@@ -117,7 +117,7 @@ def _tiene_mensaje_permiso(texto: str) -> bool:
     if deacc(base) in deacc(t):
         return True
 
-    # heurística por frases clave
+    # heurÃ­stica por frases clave
     if ("no tiene los permisos suficientes" in t) and ("visualizar este contenido" in t):
         return True
 
@@ -149,14 +149,14 @@ def _pdf_es_login_portal(path: Path) -> bool:
             return False
 
     t = (txt or "").lower()
-    return ("ingrese nombre de usuario y contraseña" in t) or ("portal" in t and "intranet" in t)
+    return ("ingrese nombre de usuario y contraseÃ±a" in t) or ("portal" in t and "intranet" in t)
 
 
 def _pdf_contiene_mensaje_permiso(path: Path) -> bool:
-    """Heurística: si el PDF trae el cartel de 'no tiene permisos', lo descartamos."""
+    """HeurÃ­stica: si el PDF trae el cartel de 'no tiene permisos', lo descartamos."""
     txt = ""
     try:
-        # PyMuPDF rápido si está
+        # PyMuPDF rÃ¡pido si estÃ¡
         import fitz
 
         doc = fitz.open(str(path))
@@ -175,8 +175,8 @@ def _pdf_contiene_mensaje_permiso(path: Path) -> bool:
 
 def _contenido_operacion_valido(texto: str) -> bool:
     """
-    Considera válido todo contenido que NO sea el mensaje de permisos.
-    (Hay operaciones muy cortas —p.ej. 'Se declara confidencial'— que antes se filtraban por longitud.)
+    Considera vÃ¡lido todo contenido que NO sea el mensaje de permisos.
+    (Hay operaciones muy cortas â€”p.ej. 'Se declara confidencial'â€” que antes se filtraban por longitud.)
     """
     t = _norm_ws(texto or "")
     if not t:
@@ -265,9 +265,9 @@ def _kill_overlays(page):
 
 
 def _asegurar_seccion_operaciones_visible(page):
-    """Muestra la sección 'OPERACIONES' si está colapsada y la desplaza a la vista."""
+    """Muestra la secciÃ³n 'OPERACIONES' si estÃ¡ colapsada y la desplaza a la vista."""
     try:
-        # toggles típicos
+        # toggles tÃ­picos
         toggle = page.locator(
             "a[href*=\"Seccion('Operaciones')\"], a[onclick*=\"Seccion('Operaciones')\"], "
             "a:has-text('OPERACIONES')"
@@ -285,7 +285,7 @@ def _asegurar_seccion_operaciones_visible(page):
             toggle.click()
             page.wait_for_timeout(100)
 
-        # desplazar título/tabla a la vista
+        # desplazar tÃ­tulo/tabla a la vista
         for sel in ["#cphDetalle_gvOperaciones", "table[id*='gvOperaciones']", "text=/^\\s*OPERACIONES\\s*$/i"]:
             loc = page.locator(sel).first
             if loc.count():
@@ -305,18 +305,18 @@ def etapa(msg: str):
 
 def _esperar_radiografia_listo(page, timeout=120):
     """
-    Espera a que Radiografía termine de cargar luego de la búsqueda.
-    Considera AJAX: esperamos a ver carátula/fojas y que 'Operaciones' o 'Adjuntos' estén
+    Espera a que RadiografÃ­a termine de cargar luego de la bÃºsqueda.
+    Considera AJAX: esperamos a ver carÃ¡tula/fojas y que 'Operaciones' o 'Adjuntos' estÃ©n
     renderizados (o, al menos, que el encabezado del expediente cambie).
     """
     import time, re
 
     t0 = time.time()
 
-    # algo de vida en la carátula
+    # algo de vida en la carÃ¡tula
     pistas_ok = [
-        "text=/\\bEXPEDIENTE N°\\b/i",
-        "text=/\\bCarátula\\b/i",
+        "text=/\\bEXPEDIENTE NÂ°\\b/i",
+        "text=/\\bCarÃ¡tula\\b/i",
         "text=/\\bTotal de Fojas\\b/i",
         "#cphDetalle_lblNroExpediente",
     ]
@@ -353,7 +353,7 @@ def _esperar_radiografia_listo(page, timeout=120):
             hay_adj = False
 
         if hay_carat and (hay_ops_grid or hay_adj):
-            # ‘or True’ ? si carátula ya cargó, damos unos ms extra y seguimos
+            # â€˜or Trueâ€™ ? si carÃ¡tula ya cargÃ³, damos unos ms extra y seguimos
             page.wait_for_timeout(300)
             return page.wait_for_timeout(120)
 
@@ -375,7 +375,7 @@ def _buscar_contenedor_operacion(root, op_id: str):
             try:
                 loc = sc.locator(sel).first
                 if loc.count():
-                    return loc  # no exijo is_visible: a veces está fuera de viewport
+                    return loc  # no exijo is_visible: a veces estÃ¡ fuera de viewport
             except Exception:
                 continue
     return None
@@ -409,13 +409,13 @@ def _ensure_pdf(path: Path) -> Path:
     """
     Si path ya es PDF ? lo devuelve. Si es imagen ? convierte con PIL.
     Si es doc/xls/ppt (y hay LibreOffice) ? convierte con soffice.
-    Caso contrario, deja el archivo como está (no rompe).
+    Caso contrario, deja el archivo como estÃ¡ (no rompe).
     """
     ext = path.suffix.lower()
     if ext == ".pdf":
         return path
 
-    # imágenes
+    # imÃ¡genes
     if ext in {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}:
         pdf = path.with_suffix(".pdf")
         Image.open(path).save(pdf, "PDF", resolution=144.0)
@@ -442,7 +442,7 @@ def _ensure_pdf(path: Path) -> Path:
         except Exception:
             pass
 
-    # si no pudimos convertir, devolvemos el original (se omitirá en la fusión si no es PDF)
+    # si no pudimos convertir, devolvemos el original (se omitirÃ¡ en la fusiÃ³n si no es PDF)
     return path
 
 
@@ -455,8 +455,8 @@ try:
     def fusionar_bloques_inline(bloques, destino: Path):
         """
         Fast path con PyMuPDF:
-        - insert_pdf para cada bloque (ultra rápido).
-        - Si header_text, dibuja marco+cabecera en las páginas recién insertadas.
+        - insert_pdf para cada bloque (ultra rÃ¡pido).
+        - Si header_text, dibuja marco+cabecera en las pÃ¡ginas reciÃ©n insertadas.
         """
         dst = fitz.open()
         margin = 18
@@ -464,7 +464,7 @@ try:
             try:
                 src = fitz.open(str(pdf_path))
             except Exception as e:
-                logging.info(f"[MERGE:SKIP] {Path(pdf_path).name} · {e}")
+                logging.info(f"[MERGE:SKIP] {Path(pdf_path).name} Â· {e}")
                 continue
 
             start = dst.page_count
@@ -487,7 +487,7 @@ try:
                         page.insert_text((margin + 10, rect.height - margin + 2), title, fontsize=12)
 
             logging.info(
-                f"[MERGE:+FITZ] {Path(pdf_path).name} · páginas={end-start} · header={'sí' if header_text else 'no'}"
+                f"[MERGE:+FITZ] {Path(pdf_path).name} Â· pÃ¡ginas={end-start} Â· header={'sÃ­' if header_text else 'no'}"
             )
 
         dst.save(str(destino), deflate=True, garbage=3)
@@ -520,7 +520,7 @@ except Exception:
                     run.append(Path(bloques[j][0]))
                     j += 1
 
-                # agregamos los paths tal cual (concatena rapidísimo)
+                # agregamos los paths tal cual (concatena rapidÃ­simo)
                 final_parts.extend(run)
                 i = j
                 continue
@@ -532,10 +532,10 @@ except Exception:
                 final_parts.append(stamped)
                 temps.append(stamped)
             except Exception as e:
-                logging.info(f"[MERGE:HDR-ERR] {Path(pdf_path).name} · {e}")
+                logging.info(f"[MERGE:HDR-ERR] {Path(pdf_path).name} Â· {e}")
             i += 1
 
-        # Concat único
+        # Concat Ãºnico
         merger = PdfMerger()
         for part in final_parts:
             merger.append(str(part))
@@ -619,8 +619,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
 
-            # Mostrar el índice desde la operación más antigua a la más reciente
-            # (ordenado por la página de inicio de cada bloque en forma ascendente)
+            # Mostrar el Ã­ndice desde la operaciÃ³n mÃ¡s antigua a la mÃ¡s reciente
+            # (ordenado por la pÃ¡gina de inicio de cada bloque en forma ascendente)
             entries = sorted(items_info[1:], key=lambda x: x[1])
             fs = 12
             x_left = margin + 6
@@ -708,12 +708,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                             idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                # Enlace clickeable (ruta más compatible con PyMuPDF 1.26.x)
+                # Enlace clickeable (ruta mÃ¡s compatible con PyMuPDF 1.26.x)
                 try:
                     idx_page.insert_link({
                         "kind": fitz.LINK_GOTO,
-                        "from": link_rect,   # rectángulo clickeable
-                        "page": target_page,  # página destino (0-based)
+                        "from": link_rect,   # rectÃ¡ngulo clickeable
+                        "page": target_page,  # pÃ¡gina destino (0-based)
                         "to": fitz.Point(0, 0),
                     })
                 except Exception:
@@ -749,9 +749,9 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
 def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bool = True) -> list[str]:
     """
-    Busca ids de operaciones en Radiografía de forma rápida.
-    - Espera como máx. RADIO_OPS_WAIT_MS (default 1200 ms) en la page principal.
-    - Si no encuentra, escanea frames con una espera mínima (300 ms c/u).
+    Busca ids de operaciones en RadiografÃ­a de forma rÃ¡pida.
+    - Espera como mÃ¡x. RADIO_OPS_WAIT_MS (default 1200 ms) en la page principal.
+    - Si no encuentra, escanea frames con una espera mÃ­nima (300 ms c/u).
     - Corta en cuanto encuentra al menos una.
     """
     import time, re
@@ -769,17 +769,17 @@ def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bo
             el = sc.locator(sels_js).nth(i)
             href = el.get_attribute("href") or ""
             oc = el.get_attribute("onclick") or ""
-            m = re.search(r"VerDecretoHtml\('([^']+)'", href or oc)  # acepta GUID o numérico
+            m = re.search(r"VerDecretoHtml\('([^']+)'", href or oc)  # acepta GUID o numÃ©rico
             if m:
                 ids.add(m.group(1))
 
-    # Asegurar que la sección esté visible y hacer una pasada rápida
+    # Asegurar que la secciÃ³n estÃ© visible y hacer una pasada rÃ¡pida
     try:
         _asegurar_seccion_operaciones_visible(sac)
     except Exception:
         pass
 
-    # Salto rápido si se pide saltar el gate completo
+    # Salto rÃ¡pido si se pide saltar el gate completo
     try:
         if _env_true("SKIP_ACCESS_GATE", "0"):
             return []
@@ -797,7 +797,7 @@ def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bo
         except Exception:
             break
 
-    # Si aún no hay ids y está permitido, frames express (300 ms c/u, corta al primer hallazgo)
+    # Si aÃºn no hay ids y estÃ¡ permitido, frames express (300 ms c/u, corta al primer hallazgo)
     if not ids and scan_frames:
         for fr in list(sac.frames):
             end = time.time() + 0.3
@@ -863,7 +863,7 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
 
             dialog = sac.locator(
                 ".ui-dialog, .modal, [role='dialog'], div[id*='TextoOp'], div[id*='TextoOperacion']"
-            ).filter(has_text=re.compile(r"operaci[oó]n", re.I)).last
+            ).filter(has_text=re.compile(r"operaci[oÃ³]n", re.I)).last
 
             try:
                 dialog.wait_for(state="visible", timeout=180)
@@ -876,7 +876,7 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
                 except Exception:
                     pass
 
-            # ? AQUÍ TAMBIÉN: sólo vale si hay contenido real
+            # ? AQUÃ TAMBIÃ‰N: sÃ³lo vale si hay contenido real
             return _contenido_operacion_valido(contenido)
 
     return False
@@ -884,7 +884,7 @@ def _puedo_abrir_alguna_operacion(sac) -> bool:
 
 def _texto_modal_operacion(dialog, timeout=500) -> str:
     """
-    Devuelve el texto del modal 'TEXTO DE LA OPERACIÓN'.
+    Devuelve el texto del modal 'TEXTO DE LA OPERACIÃ“N'.
     Si el contenido viene en un <iframe>, lee el body del frame.
     Hace polling corto hasta que haya contenido.
     """
@@ -893,7 +893,7 @@ def _texto_modal_operacion(dialog, timeout=500) -> str:
     except Exception:
         pass
 
-    # 1) ¿Tiene iframe?
+    # 1) Â¿Tiene iframe?
     try:
         fr_loc = dialog.locator("iframe").first
         if fr_loc.count():
@@ -935,7 +935,7 @@ def _texto_modal_operacion(dialog, timeout=500) -> str:
         except Exception:
             break
 
-    # 3) Último recurso: HTML -> texto plano
+    # 3) Ãšltimo recurso: HTML -> texto plano
     try:
         html = dialog.inner_html() or ""
         import re
@@ -983,7 +983,7 @@ def _op_visible_con_contenido_en_radiografia(sac, op_id: str) -> bool:
         return False  # ? si ni siquiera pudimos disparar el modal, NO hay acceso
 
     dialog = sac.locator(
-        ".ui-dialog:has-text('TEXTO DE LA OPERACIÓN'), .modal:has-text('TEXTO DE LA OPERACIÓN')"
+        ".ui-dialog:has-text('TEXTO DE LA OPERACIÃ“N'), .modal:has-text('TEXTO DE LA OPERACIÃ“N')"
     ).last
 
     try:
@@ -1000,7 +1000,7 @@ def _op_visible_con_contenido_en_radiografia(sac, op_id: str) -> bool:
 
 
 def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
-    """Devuelve True si el modal de la operación muestra el cartel de permisos insuficientes."""
+    """Devuelve True si el modal de la operaciÃ³n muestra el cartel de permisos insuficientes."""
     # intentar abrir el modal igual que en _op_visible_con_contenido_en_radiografia
     for sc in [sac] + list(sac.frames):
         link = sc.locator(
@@ -1029,7 +1029,7 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
                         continue
 
             dialog = sac.locator(
-                ".ui-dialog:has-text('TEXTO DE LA OPERACIÓN'), .modal:has-text('TEXTO DE LA OPERACIÓN')"
+                ".ui-dialog:has-text('TEXTO DE LA OPERACIÃ“N'), .modal:has-text('TEXTO DE LA OPERACIÃ“N')"
             ).last
             try:
                 dialog.wait_for(state="visible", timeout=180)
@@ -1044,16 +1044,16 @@ def _op_denegada_en_radiografia(sac, op_id: str) -> bool:
 
             return _tiene_mensaje_permiso(contenido)
 
-    return False  # si ni siquiera pudimos abrir, no afirmamos denegación explícita
+    return False  # si ni siquiera pudimos abrir, no afirmamos denegaciÃ³n explÃ­cita
 
 
 # ------------------------- UTILIDADES PDF ------------------------------
 def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
     """
-    Dibuja un marco en todo el borde y un texto (e.g. 'ADJUNTO – archivo.pdf')
-    en la parte superior de CADA página del PDF 'origen', y lo guarda en 'destino'.
+    Dibuja un marco en todo el borde y un texto (e.g. 'ADJUNTO â€“ archivo.pdf')
+    en la parte superior de CADA pÃ¡gina del PDF 'origen', y lo guarda en 'destino'.
     """
-    # Camino rápido con PyMuPDF (fitz)
+    # Camino rÃ¡pido con PyMuPDF (fitz)
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(str(origen))
@@ -1121,7 +1121,7 @@ def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
 
 def _libro_scope(libro):
     """
-    Devuelve el frame/página que realmente contiene el Libro:
+    Devuelve el frame/pÃ¡gina que realmente contiene el Libro:
     - URL de ExpedienteLibro o
     - Presencia de #indice/.indice y anchors de operaciones.
     """
@@ -1142,7 +1142,7 @@ def _libro_scope(libro):
             has_ops = False
         return (has_index and has_ops) or (has_book_url and has_ops)
 
-    # 1) página principal
+    # 1) pÃ¡gina principal
     try:
         if _is_book_scope(libro):
             return libro
@@ -1157,7 +1157,7 @@ def _libro_scope(libro):
         except Exception:
             continue
 
-    # 3) último recurso: el primer frame con anchors de operaciones
+    # 3) Ãºltimo recurso: el primer frame con anchors de operaciones
     for fr in getattr(libro, "frames", []):
         try:
             if fr.locator("a[onclick*='onItemClick'], [data-codigo]").first.count():
@@ -1169,7 +1169,7 @@ def _libro_scope(libro):
 
 
 def _all_scopes(root):
-    """Itera la página y todos sus frames (profundidad)."""
+    """Itera la pÃ¡gina y todos sus frames (profundidad)."""
     try:
         yield root
         for fr in getattr(root, "frames", []):
@@ -1192,7 +1192,7 @@ def _listar_operaciones_rapido(libro):
             yield from _iter_frames(fr)
 
     def _expand(scope):
-        # SOLO dentro del contenedor del índice
+        # SOLO dentro del contenedor del Ã­ndice
         idx = None
         for sel in ("#indice", ".indice"):
             try:
@@ -1203,7 +1203,7 @@ def _listar_operaciones_rapido(libro):
             except Exception:
                 pass
         if not idx:
-            return  # no tocar nada fuera del índice
+            return  # no tocar nada fuera del Ã­ndice
 
         sels = [
             ".dropdown-toggle[aria-expanded='false']",
@@ -1231,7 +1231,7 @@ def _listar_operaciones_rapido(libro):
                 pass
 
     def _scroll(scope):
-        # SOLO scrolleo del índice (nada de wheel global)
+        # SOLO scrolleo del Ã­ndice (nada de wheel global)
         for sel in ("#indice", ".indice"):
             try:
                 if scope.locator(sel).first.count():
@@ -1246,7 +1246,7 @@ def _listar_operaciones_rapido(libro):
             "a[onclick*='onItemClick('], a[href*='onItemClick('], "
             # data-attrs
             "a[data-codigo], [role='button'][data-codigo], li[data-codigo] a, nav a[data-codigo], "
-            # tabs/pills que guardan relación por aria-controls / clases con GUID
+            # tabs/pills que guardan relaciÃ³n por aria-controls / clases con GUID
             "a[aria-controls], a.nav-link"
         )
         n = anchors.count()
@@ -1291,7 +1291,7 @@ def _listar_operaciones_rapido(libro):
     except Exception:
         pass
 
-    # si el índice está en pestaña "Índice", mostrarla
+    # si el Ã­ndice estÃ¡ en pestaÃ±a "Ãndice", mostrarla
     for sel in ("[data-bs-target='#indice']", "a[href='#indice']", "[aria-controls='indice']"):
         try:
             loc = S.locator(sel).first
@@ -1356,7 +1356,7 @@ def fusionar_pdfs(lista, destino: Path):
 def _pdf_char_count(path: Path, paginas: int = 3) -> int:
     """
     Cuenta caracteres de texto en las primeras paginas del PDF.
-    Usa pdfminer si está; si no, PyPDF2. Devuelve un entero.
+    Usa pdfminer si estÃ¡; si no, PyPDF2. Devuelve un entero.
     """
     try:
         from pdfminer.high_level import extract_text
@@ -1376,7 +1376,7 @@ def _pdf_char_count(path: Path, paginas: int = 3) -> int:
 
 
 def _has_enough_text(path: Path, paginas: int = 3) -> bool:
-    # Umbral por defecto más alto para ser estrictos al considerar que ya hay texto
+    # Umbral por defecto mÃ¡s alto para ser estrictos al considerar que ya hay texto
     min_chars = int(os.getenv("OCR_MIN_CHARS", "1200"))
     try:
         import fitz  # PyMuPDF
@@ -1454,11 +1454,11 @@ async def _winocr_recognize_png(png_bytes: bytes, lang_tag: str):
 def convertir_pdf_a_imagenes(
     pdf_path: str | Path, out_dir: str | Path, formato: str = "png", dpi: int = 300
 ) -> list[str]:
-    """Convierte cada página de un PDF en un archivo de imagen independiente.
+    """Convierte cada pÃ¡gina de un PDF en un archivo de imagen independiente.
 
-    Se intentará usar `pdfimages (Poppler) si está disponible en el sistema.
-    Si no se encuentra, se probará `pdftoppm. Como último recurso, se
-    utilizará PyMuPDF <https://pymupdf.readthedocs.io/>_ (`fitz).
+    Se intentarÃ¡ usar `pdfimages (Poppler) si estÃ¡ disponible en el sistema.
+    Si no se encuentra, se probarÃ¡ `pdftoppm. Como Ãºltimo recurso, se
+    utilizarÃ¡ PyMuPDF <https://pymupdf.readthedocs.io/>_ (`fitz).
 
     Los archivos resultantes se nombran `page_001.png, page_002.png,
     etc. y se guardan en `out_dir.
@@ -1468,16 +1468,16 @@ def convertir_pdf_a_imagenes(
     pdf_path:
         Ruta al archivo PDF de origen.
     out_dir:
-        Directorio donde se guardarán las imágenes.
+        Directorio donde se guardarÃ¡n las imÃ¡genes.
     formato:
         Formato de salida: `"png" (por defecto) o "tiff".
     dpi:
-        Resolución para el renderizado cuando se utiliza PyMuPDF o `pdftoppm.
+        ResoluciÃ³n para el renderizado cuando se utiliza PyMuPDF o `pdftoppm.
 
     Returns
     -------
     list[str]
-        Lista con las rutas de las imágenes generadas.
+        Lista con las rutas de las imÃ¡genes generadas.
 
     Raises
     ------
@@ -1486,7 +1486,7 @@ def convertir_pdf_a_imagenes(
     ValueError
         Si `formato no es "png" ni "tiff".
     RuntimeError
-        Si no hay herramientas disponibles para realizar la conversión.
+        Si no hay herramientas disponibles para realizar la conversiÃ³n.
     """
 
     pdf_path = Path(pdf_path)
@@ -1536,7 +1536,7 @@ def convertir_pdf_a_imagenes(
         import fitz
     except Exception as e:  # pragma: no cover - se ejecuta solo si falta fitz
         raise RuntimeError(
-            "No se encontraron 'pdfimages', 'pdftoppm' ni la librería PyMuPDF"
+            "No se encontraron 'pdfimages', 'pdftoppm' ni la librerÃ­a PyMuPDF"
         ) from e
 
     doc = fitz.open(str(pdf_path))
@@ -1551,18 +1551,18 @@ def convertir_pdf_a_imagenes(
 def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = None, dpi: int = 300) -> bool:
     """
     Aplica OCR WinRT/Windows a un PDF y agrega texto seleccionable.
-    Solo realiza OCR sobre “adjuntos” (páginas escaneadas / sin texto útil en el cuerpo).
+    Solo realiza OCR sobre â€œadjuntosâ€ (pÃ¡ginas escaneadas / sin texto Ãºtil en el cuerpo).
     Probado con PyMuPDF 1.26.4 (MuPDF 1.26.7) en Windows / Python 3.12.
 
     ENV opcionales:
       OCR_DEBUG=1                -> logs extra
-      OCR_INVISIBLE=0/1          -> si 1, texto invisible (no recomendado para selección)
+      OCR_INVISIBLE=0/1          -> si 1, texto invisible (no recomendado para selecciÃ³n)
       OCR_VISIBLE_TEXT=1         -> fuerza texto visible
       OCR_ROTATIONS="0,90,270"   -> rotaciones a probar
       OCR_SCALE=2.0              -> escalado previo para OCR
-      PAGE_BODY_MIN_CHARS=50     -> umbral para “página ya tiene texto”
+      PAGE_BODY_MIN_CHARS=50     -> umbral para â€œpÃ¡gina ya tiene textoâ€
       OCR_USE_OCG=0/1            -> si 1, intenta capa OCG
-      OCR_FONT="helv"            -> fuente PDF estándar a usar
+      OCR_FONT="helv"            -> fuente PDF estÃ¡ndar a usar
       WINOCR_LANGS="es-AR+es-ES+en-US"
     """
     import os, datetime, logging
@@ -1608,7 +1608,7 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
         size = _shrink_font_to_fit(text, rect, base_size=max(4.0, h * 0.86))
         baseline_y = rect.y1 - max(0.6, h * 0.08)
         if make_invisible:
-            # Nota: algunos visores no permiten selección con render_mode=3
+            # Nota: algunos visores no permiten selecciÃ³n con render_mode=3
             page.insert_text(
                 fitz.Point(rect.x0, baseline_y),
                 text, fontsize=size, fontname=font_name, render_mode=3, color=(0, 0, 0)
@@ -1620,7 +1620,7 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             )
 
     def _is_attachment_page(pg: "fitz.Page") -> bool:
-        """Heurística: sin texto de cuerpo + presencia/área de imagen relevante."""
+        """HeurÃ­stica: sin texto de cuerpo + presencia/Ã¡rea de imagen relevante."""
         try:
             if _page_has_text(pg, min_chars=min_chars):
                 return False
@@ -1634,12 +1634,12 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                 if b.get("type") == 1 and "bbox" in b:  # imagen
                     rect = fitz.Rect(b["bbox"])
                     img_area += float(rect.width * rect.height)
-            # adjunto si la/s imagen/es cubren una parte importante de la página
+            # adjunto si la/s imagen/es cubren una parte importante de la pÃ¡gina
             if page_area > 0 and (img_area / page_area) > 0.35:
                 return True
         except Exception:
             pass
-        # último recurso: si no hay texto y hay al menos una imagen embebida
+        # Ãºltimo recurso: si no hay texto y hay al menos una imagen embebida
         try:
             return len(pg.get_images(full=True)) > 0
         except Exception:
@@ -1664,16 +1664,16 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             "creationDate": datetime.datetime.now().strftime("D:%Y%m%d%H%M%S"),
         })
 
-        # OCG opcional (no recomendado para compatibilidad de selección)
+        # OCG opcional (no recomendado para compatibilidad de selecciÃ³n)
         ocr_layer = None
         if use_ocg:
             try:
                 ocr_layer = out.add_ocg("OCR Layer", on=True, intent="View")
             except Exception as e:
-                logging.info(f"[WINOCR] add_ocg falló, sigo sin OCG: {e}")
+                logging.info(f"[WINOCR] add_ocg fallÃ³, sigo sin OCG: {e}")
                 ocr_layer = None
 
-        # Recorrer páginas y hacer OCR SOLO en adjuntos
+        # Recorrer pÃ¡ginas y hacer OCR SOLO en adjuntos
         for i in range(src.page_count):
             pg = src[i]
 
@@ -1684,7 +1684,7 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                     logging.info(f"[WINOCR:DBG] page={i+1} sin OCR (no es adjunto)")
                 continue
 
-            # Renderizar imagen de esa página (solo para este adjunto)
+            # Renderizar imagen de esa pÃ¡gina (solo para este adjunto)
             try:
                 zoom = dpi / 72.0
                 mat = fitz.Matrix(zoom, zoom)
@@ -1692,7 +1692,7 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                 png_bytes = pix.tobytes("png")
                 img_w, img_h = pix.width, pix.height
             except Exception as e:
-                logging.info(f"[WINOCR] No pude rasterizar página {i+1}: {e}")
+                logging.info(f"[WINOCR] No pude rasterizar pÃ¡gina {i+1}: {e}")
                 out.insert_pdf(src, from_page=i, to_page=i)
                 continue
 
@@ -1758,7 +1758,7 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             if dbg:
                 logging.info(f"[WINOCR:DBG] page={i+1} (adjunto) best_deg={best_deg} best_wc={best_wc}")
 
-            # tamaño de la imagen “ganadora” (por si rotó)
+            # tamaÃ±o de la imagen â€œganadoraâ€ (por si rotÃ³)
             try:
                 from PIL import Image as _Image
                 import io as _io
@@ -1767,11 +1767,11 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
             except Exception:
                 pass
 
-            # factores de escala imagen->PDF (¡sin invertir Y!)
+            # factores de escala imagen->PDF (Â¡sin invertir Y!)
             sx = page_w / float(img_w)
             sy = page_h / float(img_h)
 
-            # copiar página original
+            # copiar pÃ¡gina original
             out.insert_pdf(src, from_page=i, to_page=i)
             newp = out[-1]
 
@@ -1790,8 +1790,8 @@ def _apply_winocr_to_pdf(pdf_in: Path, dst: Path, lang_tags: list[str] | None = 
                         except Exception:
                             continue
 
-            # Pegar la imagen de la página *encima* (sin cuadros rojos)
-            # Usamos el render original (png_bytes) para que calce 1:1 con la página.
+            # Pegar la imagen de la pÃ¡gina *encima* (sin cuadros rojos)
+            # Usamos el render original (png_bytes) para que calce 1:1 con la pÃ¡gina.
             newp.insert_image(fitz.Rect(0, 0, page_w, page_h), stream=png_bytes, overlay=True)
 
             # normalizar recursos/XObjects
@@ -1845,7 +1845,7 @@ def _maybe_ocr(pdf_in: Path, force: bool = False) -> Path:
             doc = fitz.open(str(pdf_in))
             need_ocr = False
             limit = min(doc.page_count, max(1, int(os.getenv("OCR_SCAN_MAX_PAGES", "200"))))
-            # Más estricto: requiere más texto en el cuerpo para saltar OCR
+            # MÃ¡s estricto: requiere mÃ¡s texto en el cuerpo para saltar OCR
             min_chars = int(os.getenv("PAGE_BODY_MIN_CHARS", "80"))
             for i in range(limit):
                 try:
@@ -1894,7 +1894,7 @@ def _pick_selector(page, candidates):
 def _fill_first(page, candidates, value):
     s = _pick_selector(page, candidates)
     if not s:
-        raise RuntimeError(f"No encontré control para {candidates}")
+        raise RuntimeError(f"No encontrÃ© control para {candidates}")
     page.fill(s, value)
 
 
@@ -1909,7 +1909,7 @@ def _click_first(page, candidates):
 def _get_proxy_prefix(page) -> str:
     """
     Devuelve 'https://teletrabajo.justiciacordoba.gob.ar/proxy/<token>/' si existe.
-    Si NO hay proxy (Intranet directa), devuelve cadena vacía "" (no explota).
+    Si NO hay proxy (Intranet directa), devuelve cadena vacÃ­a "" (no explota).
     """
     import re
 
@@ -1932,7 +1932,7 @@ def _get_proxy_prefix(page) -> str:
     except Exception:
         pass
 
-    # Links de la página
+    # Links de la pÃ¡gina
     try:
         for a in page.query_selector_all("a[href]"):
             p = _scan_url(a.get_attribute("href") or "")
@@ -1966,9 +1966,9 @@ def _es_login_intranet(pg) -> bool:
         tiene_pwd = False
 
     try:
-        # texto típico del portal clásico
+        # texto tÃ­pico del portal clÃ¡sico
         tiene_texto = (
-            pg.get_by_text(re.compile(r"ingrese\s+nombre\s+de\s+usuario\s+y\s+contraseña", re.I))
+            pg.get_by_text(re.compile(r"ingrese\s+nombre\s+de\s+usuario\s+y\s+contraseÃ±a", re.I))
             .first.count()
             > 0
         )
@@ -1980,8 +1980,8 @@ def _es_login_intranet(pg) -> bool:
 
 def _sac_host_base(page) -> str:
     """
-    Si estamos proxificados (Teletrabajo), devolvés www.tribunales.gov.ar.
-    Si NO hay proxy, devolvés esquema+host de la URL actual (p.ej. aplicaciones.tribunales.gov.ar).
+    Si estamos proxificados (Teletrabajo), devolvÃ©s www.tribunales.gov.ar.
+    Si NO hay proxy, devolvÃ©s esquema+host de la URL actual (p.ej. aplicaciones.tribunales.gov.ar).
     """
     u = getattr(page, "url", "") or ""
     try:
@@ -2076,14 +2076,14 @@ def _fill_radiografia_y_buscar(page, nro_exp):
         "#txtNroExpediente",
         "input[id$='txtNroExpediente']",
         "input[name$='txtNroExpediente']",
-        "xpath=//label[normalize-space()='Número de Expediente:']/following::input[1]",
-        "xpath=//td[contains(normalize-space(.),'Número de Expediente')]/following::input[1]",
+        "xpath=//label[normalize-space()='NÃºmero de Expediente:']/following::input[1]",
+        "xpath=//td[contains(normalize-space(.),'NÃºmero de Expediente')]/following::input[1]",
         "xpath=//input[@type='text' and (contains(@id,'Expediente') or contains(@name,'Expediente'))]",
         "input[type='text']"
     ])
     if not txt:
         _debug_dump(page, "no_txt_expediente")
-        raise RuntimeError("No pude ubicar el campo 'Número de Expediente'.")
+        raise RuntimeError("No pude ubicar el campo 'NÃºmero de Expediente'.")
 
     try:
         txt.scroll_into_view_if_needed()
@@ -2092,14 +2092,14 @@ def _fill_radiografia_y_buscar(page, nro_exp):
     txt.click()
     txt.fill(str(nro_exp))
 
-    # Enter o botón Buscar en el MISMO scope
+    # Enter o botÃ³n Buscar en el MISMO scope
     try:
         txt.press("Enter")
         sc.wait_for_load_state("networkidle")
     except Exception:
         pass
 
-    # Enter ya se probó arriba. Si hace falta botón, buscá en pasos.
+    # Enter ya se probÃ³ arriba. Si hace falta botÃ³n, buscÃ¡ en pasos.
     btn = sc.locator("#btnBuscarExp, input[id$='btnBuscarExp']").first
 
     if not btn.count():
@@ -2108,7 +2108,7 @@ def _fill_radiografia_y_buscar(page, nro_exp):
         btn = sc.get_by_role("button", name=re.compile(r"buscar", re.I)).first
 
     if not btn.count():
-        # Inputs que suelen usarse como botón de búsqueda
+        # Inputs que suelen usarse como botÃ³n de bÃºsqueda
         btn = sc.locator(
             "input[type='submit'][value*='Buscar'], "
             "input[type='image'][alt*='Buscar'], "
@@ -2138,7 +2138,7 @@ def _abrir_libro_legacy(sac):
     import re
 
     try:
-        sac.locator("text=¿Qué puedo hacer?").first.click()
+        sac.locator("text=Â¿QuÃ© puedo hacer?").first.click()
     except Exception:
         pass
     sac.wait_for_timeout(200)
@@ -2196,54 +2196,54 @@ def _abrir_libro_legacy(sac):
 def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     import re
 
-    # a) si nos mandó al login, loguear y volver a Radiografía + re-buscar
+    # a) si nos mandÃ³ al login, loguear y volver a RadiografÃ­a + re-buscar
     def _volver_a_radiografia_y_buscar():
         proxy_prefix = _get_proxy_prefix(sac)
         sac.goto(proxy_prefix + URL_RADIOGRAFIA, wait_until="domcontentloaded")
         if nro_exp:  # <- re-busca el expediente
             _fill_radiografia_y_buscar(sac, nro_exp)
 
-    # -- Gate de Radiografía: ¿hay operaciones y puedo ver su contenido? --
+    # -- Gate de RadiografÃ­a: Â¿hay operaciones y puedo ver su contenido? --
     STRICT = _env_true("STRICT_ONLY_VISIBLE_OPS", "0")
     CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
 
-    op_ids_rad = _listar_ops_ids_radiografia(sac)  # ? antes decía p_ids_rad
+    op_ids_rad = _listar_ops_ids_radiografia(sac)  # ? antes decÃ­a p_ids_rad
 
-    # 1) ¿Se ve alguna operación por DOM?
+    # 1) Â¿Se ve alguna operaciÃ³n por DOM?
     hay_ops = bool(op_ids_rad)
 
-    # 2) Fallback robusto: ¿puedo abrir alguna operación y leer su contenido?
+    # 2) Fallback robusto: Â¿puedo abrir alguna operaciÃ³n y leer su contenido?
     if not hay_ops:
         hay_ops = _puedo_abrir_alguna_operacion(sac)
 
     if STRICT and not hay_ops:
-        logging.info("[SEC] Radiografía: no pude detectar operaciones ? sin acceso. Abortando.")
-        messagebox.showwarning("Sin acceso", "No tenés acceso a este expediente (no aparecen operaciones).")
+        logging.info("[SEC] RadiografÃ­a: no pude detectar operaciones ? sin acceso. Abortando.")
+        messagebox.showwarning("Sin acceso", "No tenÃ©s acceso a este expediente (no aparecen operaciones).")
         return
 
-    # Si tengo ids, verifico UNA (o todas, según CHECK_ALL); si no, ya validé con el fallback
+    # Si tengo ids, verifico UNA (o todas, segÃºn CHECK_ALL); si no, ya validÃ© con el fallback
     perm_ok = True
     if op_ids_rad:
         ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
-        # 1) Si ALGUNA operación probada muestra el cartel ? abortamos TODO
+        # 1) Si ALGUNA operaciÃ³n probada muestra el cartel ? abortamos TODO
         if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
-            logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
+            logging.info("[SEC] RadiografÃ­a mostrÃ³ 'sin permisos' en al menos una operaciÃ³n. Abortando.")
             messagebox.showwarning(
                 "Sin acceso",
-                "No tenés permisos para visualizar el contenido de este expediente "
-                "(al menos una operación está bloqueada). No se descargará nada.",
+                "No tenÃ©s permisos para visualizar el contenido de este expediente "
+                "(al menos una operaciÃ³n estÃ¡ bloqueada). No se descargarÃ¡ nada.",
             )
             return
 
-        # 2) Si ninguna está denegada explícitamente, exigimos que al menos una tenga contenido visible
+        # 2) Si ninguna estÃ¡ denegada explÃ­citamente, exigimos que al menos una tenga contenido visible
         perm_ok = any(_op_visible_con_contenido_en_radiografia(sac, _id) for _id in ids_a_probar)
     elif not _puedo_abrir_alguna_operacion(sac):
         perm_ok = False
 
     if STRICT and not perm_ok:
-        logging.info("[SEC] Radiografía: aparece grilla pero el contenido está bloqueado.")
+        logging.info("[SEC] RadiografÃ­a: aparece grilla pero el contenido estÃ¡ bloqueado.")
         messagebox.showwarning(
-            "Sin acceso", "No tenés permisos para visualizar el contenido de las operaciones. No se descargó nada."
+            "Sin acceso", "No tenÃ©s permisos para visualizar el contenido de las operaciones. No se descargÃ³ nada."
         )
         return
 
@@ -2251,9 +2251,9 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
         _login_intranet(sac, intra_user, intra_pass)
         _volver_a_radiografia_y_buscar()
 
-    # 0) por si el botón vive en "¿Qué puedo hacer?"
+    # 0) por si el botÃ³n vive en "Â¿QuÃ© puedo hacer?"
     try:
-        sac.locator("text=¿Qué puedo hacer?").first.click()
+        sac.locator("text=Â¿QuÃ© puedo hacer?").first.click()
         sac.wait_for_timeout(200)
     except Exception:
         pass
@@ -2268,7 +2268,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
                 if "PortalWeb/LogIn/Login.aspx" not in (sac.url or ""):
                     return sac
 
-                # si cayó al login ? volver a Radiografía y reintentar una vez
+                # si cayÃ³ al login ? volver a RadiografÃ­a y reintentar una vez
                 _login_intranet(sac, intra_user, intra_pass)
                 _volver_a_radiografia_y_buscar()
 
@@ -2281,7 +2281,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     except Exception:
         pass
 
-    # 2) Intento: ejecutar la función en page/frames (inline)
+    # 2) Intento: ejecutar la funciÃ³n en page/frames (inline)
     for fr in [sac] + list(sac.frames):
         try:
             has_fn = fr.evaluate("() => typeof window.ExpedienteLibro === 'function'")
@@ -2305,13 +2305,13 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
             except Exception:
                 pass
 
-    # 3) Fallback: construir URL directa (AHORA sí, estando en Radiografía)
-    # si por algún motivo volvimos a login, resolvelo primero
+    # 3) Fallback: construir URL directa (AHORA sÃ­, estando en RadiografÃ­a)
+    # si por algÃºn motivo volvimos a login, resolvelo primero
     if "PortalWeb/LogIn/Login.aspx" in (sac.url or "") or "SacInterior/Login.aspx" in (sac.url or ""):
         _login_intranet(sac, intra_user, intra_pass)
         _volver_a_radiografia_y_buscar()
 
-    # lee los hidden en la página correcta
+    # lee los hidden en la pÃ¡gina correcta
     def _read_hidden_generic(page, key_patterns):
         sels = []
         for k in key_patterns:
@@ -2332,7 +2332,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     exp_id = _read_hidden_generic(sac, ["hdIdExpediente", "hdExpedienteId"])
     if not exp_id:
         _debug_dump(sac, "no_hdIdExpediente")
-        raise RuntimeError("No encontré el id del expediente (hdIdExpediente/hdExpedienteId).")
+        raise RuntimeError("No encontrÃ© el id del expediente (hdIdExpediente/hdExpedienteId).")
 
     key = _read_hidden_generic(sac, ["hdIdExpedienteKey"]) or ""
     lvl = _read_hidden_generic(sac, ["hdNivelAcceso"]) or ""
@@ -2345,7 +2345,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
     url = url + "?" + qs
 
     try:
-        # Abrir el Libro en una nueva pestaña para no perder la Radiografía
+        # Abrir el Libro en una nueva pestaÃ±a para no perder la RadiografÃ­a
         with sac.context.expect_page() as pop:
             sac.evaluate("url => window.open(url, '_blank')", url)
         libro = pop.value
@@ -2357,7 +2357,7 @@ def _abrir_libro_intranet(sac, intra_user, intra_pass, nro_exp):
             pass
         return libro
     except Exception:
-        # Fallback: navegar en la pestaña actual (menos robusto)
+        # Fallback: navegar en la pestaÃ±a actual (menos robusto)
         sac.goto(url, wait_until="domcontentloaded")
         try:
             libro = sac.wait_for_event("popup", timeout=1500)
@@ -2378,11 +2378,11 @@ def _abrir_libro(sac, intra_user=None, intra_pass=None, nro_exp=None):
 
 def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[Path]:
     """
-    Encuentra y descarga los adjuntos que cuelgan de UNA operación dentro del Libro.
+    Encuentra y descarga los adjuntos que cuelgan de UNA operaciÃ³n dentro del Libro.
     - Descarga por la UI (Playwright).
     - Convierte a PDF si hace falta.
     - Descarta respuestas sin permiso.
-    - Evita duplicados exactos (nombre+tamaño).
+    - Evita duplicados exactos (nombre+tamaÃ±o).
     """
     pdfs: list[Path] = []
     vistos: set[tuple[str, int]] = set()
@@ -2414,7 +2414,7 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
 
-            # Normalización a PDF
+            # NormalizaciÃ³n a PDF
             if not _is_real_pdf(destino):
                 pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
             else:
@@ -2430,7 +2430,7 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
                     pass
                 continue
 
-            # Deduplicar por (nombre, tamaño)
+            # Deduplicar por (nombre, tamaÃ±o)
             try:
                 key = (pdf.name, pdf.stat().st_size)
             except Exception:
@@ -2440,7 +2440,7 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
             vistos.add(key)
             pdfs.append(pdf)
         except Exception:
-            # Si algo abre otra pestaña y falla, seguimos con el resto
+            # Si algo abre otra pestaÃ±a y falla, seguimos con el resto
             continue
 
     return pdfs
@@ -2448,16 +2448,16 @@ def _descargar_adjuntos_de_operacion(libro, op_id: str, carpeta: Path) -> list[P
 
 def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]]:
     """
-    Devuelve { op_id: [PDFs...] } leyendo la grilla “Adjuntos” de Radiografía.
-    - Descarga cada adjunto por la UI (lo mismo que hacés a mano).
+    Devuelve { op_id: [PDFs...] } leyendo la grilla â€œAdjuntosâ€ de RadiografÃ­a.
+    - Descarga cada adjunto por la UI (lo mismo que hacÃ©s a mano).
     - Convierte a PDF si hace falta.
     - Descarta respuestas sin permiso.
-    - Evita duplicados exactos (nombre+tamaño).
+    - Evita duplicados exactos (nombre+tamaÃ±o).
     """
     mapeo: dict[str, list[Path]] = {}
     vistos: set[tuple[str, int]] = set()
 
-    # Asegurar que la sección 'Adjuntos' esté visible
+    # Asegurar que la secciÃ³n 'Adjuntos' estÃ© visible
     try:
         toggle = sac.locator("a[href*=\"Seccion('Adjuntos')\"], a[onclick*=\"Seccion('Adjuntos')\"]").first
         cont = sac.locator("#divAdjuntos").first
@@ -2482,7 +2482,7 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
     for i in range(1, total):  # saltear header
         fila = filas.nth(i)
 
-        # op_id en la col. “Operación – Tipo de Operación”
+        # op_id en la col. â€œOperaciÃ³n â€“ Tipo de OperaciÃ³nâ€
         op_link = fila.locator("a[href*='VerDecretoHtml'], a[onclick*='VerDecretoHtml']").first
         op_id = None
         if op_link.count():
@@ -2509,7 +2509,7 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
 
-            # Normalización a PDF
+            # NormalizaciÃ³n a PDF
             if not _is_real_pdf(destino):
                 pdf = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
             else:
@@ -2525,7 +2525,7 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
                     pass
                 continue
 
-            # Deduplicar por (nombre, tamaño)
+            # Deduplicar por (nombre, tamaÃ±o)
             try:
                 key = (pdf.name, pdf.stat().st_size)
             except Exception:
@@ -2543,9 +2543,9 @@ def _descargar_adjuntos_grid_mapeado(sac, carpeta: Path) -> dict[str, list[Path]
 
 def _mapear_fechas_operaciones_radiografia(sac) -> tuple[dict[str, str], list[str]]:
     """
-    Lee la grilla de Operaciones en Radiografía y devuelve:
+    Lee la grilla de Operaciones en RadiografÃ­a y devuelve:
       - dict { op_id -> 'dd/mm/aaaa' }
-      - lista de fechas únicas en el ORDEN en que aparecen en la grilla (para intercalar cronológicamente)
+      - lista de fechas Ãºnicas en el ORDEN en que aparecen en la grilla (para intercalar cronolÃ³gicamente)
     """
     import re
     fechas_por_op: dict[str, str] = {}
@@ -2572,7 +2572,7 @@ def _mapear_fechas_operaciones_radiografia(sac) -> tuple[dict[str, str], list[st
         except Exception:
             continue
 
-        # fecha (buscar en celdas con patrón dd/mm/aaaa)
+        # fecha (buscar en celdas con patrÃ³n dd/mm/aaaa)
         fecha = ""
         try:
             celdas = fila.locator("td")
@@ -2598,18 +2598,18 @@ def _mapear_fechas_operaciones_radiografia(sac) -> tuple[dict[str, str], list[st
 
 def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
     """
-    Descarga informes técnicos desde la sección 'INFORMES TÉCNICOS MPF' y devuelve [(PDF, fecha_mov)].
-    - Abre SOLO esa sección (no toca Adjuntos).
-    - Click en el ícono PDF (javascript:VerInformeMPF(...)).
+    Descarga informes tÃ©cnicos desde la secciÃ³n 'INFORMES TÃ‰CNICOS MPF' y devuelve [(PDF, fecha_mov)].
+    - Abre SOLO esa secciÃ³n (no toca Adjuntos).
+    - Click en el Ã­cono PDF (javascript:VerInformeMPF(...)).
     - Extrae 'Fecha Movimiento' de la fila (dd/mm/aaaa).
     """
     import re
     informes: list[tuple[Path, str]] = []
     vistos: set[tuple[str, int]] = set()
 
-    # --- 1) Abrir específicamente la sección InformesTecnicosMPF ---
+    # --- 1) Abrir especÃ­ficamente la secciÃ³n InformesTecnicosMPF ---
     try:
-        # Si ya está visible, no hacemos nada
+        # Si ya estÃ¡ visible, no hacemos nada
         cont = sac.locator("#divInformesTecnicosMPF").first
         visible = False
         if cont.count():
@@ -2619,7 +2619,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
                 visible = False
 
         if not visible:
-            # Prioridad 1: ejecutar la función exacta del sitio
+            # Prioridad 1: ejecutar la funciÃ³n exacta del sitio
             try:
                 sac.evaluate("() => { try { Seccion && Seccion('InformesTecnicosMPF'); } catch(e){} }")
             except Exception:
@@ -2628,7 +2628,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             # Prioridad 2: click en el anchor correcto (el que llama Seccion('InformesTecnicosMPF'))
             if cont.count():
                 try:
-                    # Subimos hasta el contenedor, luego buscamos el <a> con esa sección
+                    # Subimos hasta el contenedor, luego buscamos el <a> con esa secciÃ³n
                     sac.locator("a[href*=\"Seccion('InformesTecnicosMPF')\"], a[onclick*=\"Seccion('InformesTecnicosMPF')\"]").first.scroll_into_view_if_needed()
                 except Exception:
                     pass
@@ -2642,7 +2642,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             except Exception:
                 pass
 
-            # Prioridad 3: click directo en el ícono +/expandir de esa sección (id único)
+            # Prioridad 3: click directo en el Ã­cono +/expandir de esa secciÃ³n (id Ãºnico)
             try:
                 img = sac.locator("#imgInformesTecnicosMPF").first
                 if img.count():
@@ -2665,7 +2665,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
     except Exception:
         pass
 
-    # --- 2) Asegurar que la tabla esté y tenga filas ---
+    # --- 2) Asegurar que la tabla estÃ© y tenga filas ---
     # (algunas skins tardan un poco en pintar la grilla)
     filas = None
     for _ in range(40):  # ~6s total
@@ -2708,15 +2708,15 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
     for i in range(1, total):  # saltear header
         fila = filas.nth(i)
 
-        # Link del PDF (ícono Adobe) + GUID para invocación directa
+        # Link del PDF (Ã­cono Adobe) + GUID para invocaciÃ³n directa
         import re
-        # Selector robusto: match por onclick/href que contenga VerInformeMPF y por ícono PDF
+        # Selector robusto: match por onclick/href que contenga VerInformeMPF y por Ã­cono PDF
         link = fila.locator(
             "*[onclick*='VerInformeMPF'], *[href*='VerInformeMPF'], a:has(img[src*='adobe']), a:has(img[src*='Adobe']), a:has(img[src*='pdf'])"
         ).first
         if not link.count():
             try:
-                logging.info(f"[INF] Fila {i}: sin link/ícono de informe técnico")
+                logging.info(f"[INF] Fila {i}: sin link/Ã­cono de informe tÃ©cnico")
                 try:
                     html = fila.inner_html()
                     logging.info(f"[INF] Fila {i}: HTML fila (recortado): {html[:1000]}")
@@ -2741,7 +2741,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
         except Exception:
             pass
         try:
-            logging.info(f"[INF] Fila {i}: GUID: {'sí' if guid else 'no'}")
+            logging.info(f"[INF] Fila {i}: GUID: {'sÃ­' if guid else 'no'}")
         except Exception:
             pass
 
@@ -2866,11 +2866,11 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             except PWTimeoutError:
                 pass
 
-            # 2.b) si no hubo popup nuevo, intentar respuesta inline en la misma página
+            # 2.b) si no hubo popup nuevo, intentar respuesta inline en la misma pÃ¡gina
             if not destino:
                 try:
                     try:
-                        logging.info(f"[INF] Fila {i}: esperando respuesta inline en misma página")
+                        logging.info(f"[INF] Fila {i}: esperando respuesta inline en misma pÃ¡gina")
                     except Exception:
                         pass
                     def _is_pdf_resp_inline(r):
@@ -2895,15 +2895,15 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
                         cuerpo = b''
                     destino = _guardar(cuerpo, nombre)
                     try:
-                        logging.info(f"[INF] Fila {i}: inline misma página -> {'OK '+destino.name if destino else 'sin descarga'}")
+                        logging.info(f"[INF] Fila {i}: inline misma pÃ¡gina -> {'OK '+destino.name if destino else 'sin descarga'}")
                     except Exception:
                         pass
                 except PWTimeoutError:
                     pass
 
-            # 2.c) si sigue sin destino, puede reutilizar uno existente o invocar directo la función
+            # 2.c) si sigue sin destino, puede reutilizar uno existente o invocar directo la funciÃ³n
             if not destino:
-                # invocación directa de la función del sitio como último recurso
+                # invocaciÃ³n directa de la funciÃ³n del sitio como Ãºltimo recurso
                 if guid:
                     try:
                         def _is_pdf_resp_eval(r):
@@ -2924,7 +2924,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
                         except Exception:
                             pass
 
-                # buscamos en todas las páginas del contexto (incluida la actual)
+                # buscamos en todas las pÃ¡ginas del contexto (incluida la actual)
                 for p in reversed(ctx.pages):
                     destino = _capturar_desde_pagina(p)
                     if destino:
@@ -2934,7 +2934,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
                 except Exception:
                     pass
 
-        # Validaciones finales del PDF (igual que tenías)
+        # Validaciones finales del PDF (igual que tenÃ­as)
         if not destino or not destino.exists():
             try:
                 logging.info(f"[INF] Fila {i}: sin archivo destino")
@@ -2945,7 +2945,7 @@ def _descargar_informes_tecnicos(sac, carpeta: Path) -> list[tuple[Path, str]]:
             destino = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
             if not destino or not destino.exists() or destino.suffix.lower() != ".pdf":
                 try:
-                    logging.info(f"[INF] Fila {i}: conversión a PDF fallida")
+                    logging.info(f"[INF] Fila {i}: conversiÃ³n a PDF fallida")
                 except Exception:
                     pass
                 continue
@@ -2976,7 +2976,7 @@ def _fecha_rnr_desde_pdf(pdf_path: Path) -> str | None:
     """
     Intenta extraer la fecha del Informe RNR desde el PDF.
     - Primero busca dd/mm/aaaa literal.
-    - Luego busca "20 de septiembre de 2023" (mes en español), con o sin día de semana/lugar.
+    - Luego busca "20 de septiembre de 2023" (mes en espaÃ±ol), con o sin dÃ­a de semana/lugar.
     - Si no hay texto (escaneado), aplica OCR best-effort y reintenta.
     Devuelve "dd/mm/aaaa" o None.
     """
@@ -3045,7 +3045,7 @@ def _fecha_rnr_desde_pdf(pdf_path: Path) -> str | None:
     if fecha:
         return fecha
 
-    # Best-effort: OCR si está habilitado/posible
+    # Best-effort: OCR si estÃ¡ habilitado/posible
     try:
         pdf_ocr = _maybe_ocr(pdf_path)
         if pdf_ocr and Path(pdf_ocr).exists():
@@ -3060,21 +3060,21 @@ def _fecha_rnr_desde_pdf(pdf_path: Path) -> str | None:
 def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str]]:
     """
     Descarga los Informes del Registro Nacional de Reincidencia (RNR) y devuelve [(PDF, fecha_informe)].
-    - Abre específicamente la sección "INFORMES REGISTRO NACIONAL DE REINCIDENCIA".
-    - Hace click en el ícono PDF de cada fila y captura descarga/popup/inline.
+    - Abre especÃ­ficamente la secciÃ³n "INFORMES REGISTRO NACIONAL DE REINCIDENCIA".
+    - Hace click en el Ã­cono PDF de cada fila y captura descarga/popup/inline.
     - La fecha se extrae desde el propio PDF (arriba a la izquierda), no de la grilla.
     """
     import re
     informes: list[tuple[Path, str]] = []
     vistos: set[tuple[str, int]] = set()
 
-    # 1) Intentar mostrar la sección (varias variantes conocidas)
+    # 1) Intentar mostrar la secciÃ³n (varias variantes conocidas)
     try:
         try:
-            logging.info("[RNR] Intentando abrir sección Reincidencias")
+            logging.info("[RNR] Intentando abrir secciÃ³n Reincidencias")
         except Exception:
             pass
-        # a) llamada directa a la función del sitio (varios nombres probables)
+        # a) llamada directa a la funciÃ³n del sitio (varios nombres probables)
         for sec in [
             'InformesReincidencia',
             'InformesRegistroNacionalReincidencia',
@@ -3116,7 +3116,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                         img.evaluate("el=>el.click()")
             except Exception:
                 pass
-        # Si existe el hidden de estado (#hdReincidencias) y está en 0, forzar un click más
+        # Si existe el hidden de estado (#hdReincidencias) y estÃ¡ en 0, forzar un click mÃ¡s
         try:
             hd = sac.locator("#hdReincidencias").first
             if hd and hd.count():
@@ -3155,12 +3155,12 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
         except Exception:
             continue
 
-    # fallback débil: buscar por texto visible del rótulo de sección y luego el parent que contenga una tabla
+    # fallback dÃ©bil: buscar por texto visible del rÃ³tulo de secciÃ³n y luego el parent que contenga una tabla
     if not cont:
         try:
             lab = sac.locator(r"text=/INFORMES\s+REGISTRO\s+NACIONAL.*REINCIDENCIAS?/i").first
             if lab and lab.count():
-                # usar el ancestro próximo con una tabla
+                # usar el ancestro prÃ³ximo con una tabla
                 for _ in range(4):
                     try:
                         lab = lab.locator("xpath=..")
@@ -3176,7 +3176,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
 
     if not cont:
         try:
-            logging.info("[RNR] No se halló contenedor por ID conocidos ni por rótulo.")
+            logging.info("[RNR] No se hallÃ³ contenedor por ID conocidos ni por rÃ³tulo.")
         except Exception:
             pass
         return informes
@@ -3301,7 +3301,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
         except Exception:
             continue
 
-        # Link/ícono candidato en la fila
+        # Link/Ã­cono candidato en la fila
         link = fila.locator(
             "*[onclick*='Reincidencia'], *[href*='Reincidencia'], *[onclick*='InformeRNR'], *[href*='InformeRNR'], "
             "a:has(img[src*='adobe']), a:has(img[src*='Adobe']), a:has(img[src*='Adobe16']), a:has(img[src*='pdf']), "
@@ -3314,12 +3314,12 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             if not (img_only and img_only.count()):
                 try:
                     html_f = fila.inner_html()
-                    logging.info(f"[RNR] Fila {i}: sin link/ícono (recorte): {(html_f or '')[:800]}")
+                    logging.info(f"[RNR] Fila {i}: sin link/Ã­cono (recorte): {(html_f or '')[:800]}")
                 except Exception:
                     pass
                 continue
 
-        # GUID/ID (si hubiera) para invocación directa
+        # GUID/ID (si hubiera) para invocaciÃ³n directa
         guid = None
         try:
             href = (link.get_attribute("href") if link and link.count() else None) or ""
@@ -3388,7 +3388,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             except PWTimeoutError:
                 pass
 
-            # 3) inline en la misma página
+            # 3) inline en la misma pÃ¡gina
             if not destino:
                 try:
                     def _is_pdf_resp_inline(r):
@@ -3415,7 +3415,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                 except PWTimeoutError:
                     pass
 
-            # 4) invocación directa por JS si tenemos guid
+            # 4) invocaciÃ³n directa por JS si tenemos guid
             if not destino and guid:
                 try:
                     def _is_pdf_resp_eval(r):
@@ -3458,7 +3458,7 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
         fecha = _fecha_rnr_desde_pdf(destino) or ""
         informes.append((destino, fecha))
 
-    # Fallback: si no se capturó nada por filas, intentar por candidatos globales en el contenedor
+    # Fallback: si no se capturÃ³ nada por filas, intentar por candidatos globales en el contenedor
     if not informes:
         try:
             cand = cont.locator(
@@ -3517,15 +3517,15 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
 
 def _extraer_adjuntos_embebidos(pdf_in: Path, out_dir: Path) -> list[Path]:
     """
-    Extrae archivos embebidos / adjuntos de un PDF (PyMuPDF o pikepdf si está disponible).
-    Devuelve lista de paths extraídos.
+    Extrae archivos embebidos / adjuntos de un PDF (PyMuPDF o pikepdf si estÃ¡ disponible).
+    Devuelve lista de paths extraÃ­dos.
     """
     extraidos: list[Path] = []
-    # PyMuPDF primero (rápido y suele venir instalado)
+    # PyMuPDF primero (rÃ¡pido y suele venir instalado)
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(str(pdf_in))
-        # nombres segun versión
+        # nombres segun versiÃ³n
         try:
             names = list(doc.embedded_file_names())
         except Exception:
@@ -3568,7 +3568,7 @@ def _extraer_adjuntos_embebidos(pdf_in: Path, out_dir: Path) -> list[Path]:
             except Exception:
                 # Manual: recorrer EmbeddedFiles
                 af = pdf.open_outline_root()
-                # si no está, omitimos
+                # si no estÃ¡, omitimos
                 pass
     except Exception:
         pass
@@ -3577,10 +3577,10 @@ def _extraer_adjuntos_embebidos(pdf_in: Path, out_dir: Path) -> list[Path]:
 
 
 
-# --------------------- Portal ? “Portal de Aplicaciones PJ” ------------
+# --------------------- Portal ? â€œPortal de Aplicaciones PJâ€ ------------
 def _open_portal_aplicaciones_pj(page):
     """
-    Abre el tile “Portal de Aplicaciones PJ” (NO el que empieza con INTRANET).
+    Abre el tile â€œPortal de Aplicaciones PJâ€ (NO el que empieza con INTRANET).
     El portal es Angular; el texto vive en un <span> dentro de una card.
     """
     try:
@@ -3598,14 +3598,14 @@ def _open_portal_aplicaciones_pj(page):
     target = header if header.count() else card
     if not target or target.count() == 0:
         _debug_dump(page, "tile_not_found")
-        raise RuntimeError("No encontré 'Portal de Aplicaciones PJ'.")
+        raise RuntimeError("No encontrÃ© 'Portal de Aplicaciones PJ'.")
 
     try:
         target.scroll_into_view_if_needed()
     except Exception:
         pass
 
-    # Misma pestaña
+    # Misma pestaÃ±a
     try:
         with page.expect_navigation(timeout=7000):
             target.click(force=True)
@@ -3672,7 +3672,7 @@ def _login_intranet(page, intra_user, intra_pass):
             return False
 
     def _logged_in(sc):
-        # Sin password + link/acción de salir visibles
+        # Sin password + link/acciÃ³n de salir visibles
         try:
             if _has_password(sc):
                 return False
@@ -3684,12 +3684,12 @@ def _login_intranet(page, intra_user, intra_pass):
         except Exception:
             return False
 
-    # ? Solo devolvé “ya activo” si de verdad vemos logout y no hay password en ningún lado
+    # ? Solo devolvÃ© â€œya activoâ€ si de verdad vemos logout y no hay password en ningÃºn lado
     if any(_logged_in(sc) for sc in scopes):
-        logging.info("[LOGIN] Sesión ya activa (logout visible).")
+        logging.info("[LOGIN] SesiÃ³n ya activa (logout visible).")
         return
 
-    # Si hay cualquier password en la página, vamos a completar el login
+    # Si hay cualquier password en la pÃ¡gina, vamos a completar el login
     target_scope = None
     user_box = None
     pass_box = None
@@ -3734,7 +3734,7 @@ def _login_intranet(page, intra_user, intra_pass):
             break
 
     if not (target_scope and user_box and pass_box):
-        logging.info("[LOGIN] No se encontró un par usuario/clave visible; continúo sin login.")
+        logging.info("[LOGIN] No se encontrÃ³ un par usuario/clave visible; continÃºo sin login.")
         return
 
     def _smart_fill(sc, el, val):
@@ -3759,7 +3759,7 @@ def _login_intranet(page, intra_user, intra_pass):
     _smart_fill(target_scope, user_box, intra_user)
     _smart_fill(target_scope, pass_box, intra_pass)
 
-    # Enviar (Enter o botón submit)
+    # Enviar (Enter o botÃ³n submit)
     try:
         pass_box.press("Enter")
         target_scope.wait_for_load_state("networkidle")
@@ -3770,8 +3770,8 @@ def _login_intranet(page, intra_user, intra_pass):
         "button[type='submit']",
         "input[type='submit']",
         "button:has-text('Ingresar')",
-        "button:has-text('Iniciar sesión')",
-        "xpath=//span[normalize-space()='Ingresar' or normalize-space()='Iniciar sesión']/ancestor::button[1]"
+        "button:has-text('Iniciar sesiÃ³n')",
+        "xpath=//span[normalize-space()='Ingresar' or normalize-space()='Iniciar sesiÃ³n']/ancestor::button[1]"
     ])
     if btn and btn.count():
         try:
@@ -3823,7 +3823,7 @@ def _kill_overlays(page):
 def _ensure_public_apps(page):
     """
     Posiciona en PublicApps.aspx pero nunca sale del proxy.
-    Si todavía no hay /proxy/<token>/ vuelve a la grilla y abre por tile.
+    Si todavÃ­a no hay /proxy/<token>/ vuelve a la grilla y abre por tile.
     """
     proxy_prefix = _get_proxy_prefix(page)
     if not proxy_prefix:
@@ -3848,7 +3848,7 @@ def _expandir_y_cargar_todo_el_libro(libro):
     except Exception:
         pass
 
-    # ? activar killer mientras tocamos el índice
+    # ? activar killer mientras tocamos el Ã­ndice
     handler = _kill_spurious_popups(libro.context)
     try:
         items = _listar_operaciones_rapido(libro)
@@ -3873,7 +3873,7 @@ def _expandir_y_cargar_todo_el_libro(libro):
 def _mostrar_operacion(libro, op_id: str, tipo: str):
     import re
 
-    # 1) localizar el link del índice en cualquier frame
+    # 1) localizar el link del Ã­ndice en cualquier frame
     link, link_scope = None, None
     for sc in _all_scopes(libro):
         try:
@@ -3899,7 +3899,7 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
         if link:
             break
 
-    # 2) si no vino 'tipo', intentá inferirlo del link encontrado
+    # 2) si no vino 'tipo', intentÃ¡ inferirlo del link encontrado
     if (not tipo) and link:
         try:
             oc = (link.get_attribute("onclick") or "") + " " + (
@@ -3915,7 +3915,7 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
         except Exception:
             pass
 
-    # 3) intento principal: clic real en el link del índice
+    # 3) intento principal: clic real en el link del Ã­ndice
     clicked = False
     if link:
         try:
@@ -3940,7 +3940,7 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
                 except Exception:
                     pass
 
-    # 4) fallback: ejecutar onItemClick donde exista (página o cualquier frame)
+    # 4) fallback: ejecutar onItemClick donde exista (pÃ¡gina o cualquier frame)
     if not clicked:
         for sc in _all_scopes(libro):
             try:
@@ -3956,7 +3956,7 @@ def _mostrar_operacion(libro, op_id: str, tipo: str):
             except Exception:
                 continue
 
-    # 5) último recurso: evento custom usado por algunas skins
+    # 5) Ãºltimo recurso: evento custom usado por algunas skins
     if not clicked and link_scope:
         try:
             link_scope.evaluate(
@@ -3972,7 +3972,7 @@ def _extraer_url_de_link(link, proxy_prefix: str) -> str | None:
     href = link.get_attribute("href") or ""
     oc = link.get_attribute("onclick") or ""
 
-    # 1) Caso clásico: URL absoluta o /proxy/ relativo
+    # 1) Caso clÃ¡sico: URL absoluta o /proxy/ relativo
     url = _extract_url_from_js(href or oc)
     if url:
         if url.startswith("/proxy/"):
@@ -4013,12 +4013,12 @@ def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Pa
         return destino
     except SSLError as e:
         msg = str(e).lower()
-        # fallback SOLO si es el host de tribunales y el problema es verificación de cert
+        # fallback SOLO si es el host de tribunales y el problema es verificaciÃ³n de cert
         if host.endswith("tribunales.gov.ar") and (
             "self-signed" in msg or "certificate verify failed" in msg
         ):
             logging.info(
-                f"[DL:WARN] SSL en {host} (self-signed). Reintento sin verificación TLS."
+                f"[DL:WARN] SSL en {host} (self-signed). Reintento sin verificaciÃ³n TLS."
             )
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             try:
@@ -4029,13 +4029,13 @@ def _descargar_archivo(session: requests.Session, url: str, destino: Path) -> Pa
                 logging.info(f"[DL:OK/INSECURE] {destino.name} ({sz} bytes)")
                 return destino
             except Exception as e2:
-                logging.info(f"[DL:ERR] {destino.name} · {e2}")
+                logging.info(f"[DL:ERR] {destino.name} Â· {e2}")
                 return None
         # cualquier otro SSLError
-        logging.info(f"[DL:ERR] {destino.name} · {e}")
+        logging.info(f"[DL:ERR] {destino.name} Â· {e}")
         return None
     except Exception as e:
-        logging.info(f"[DL:ERR] {destino.name} · {e}")
+        logging.info(f"[DL:ERR] {destino.name} Â· {e}")
         return None
 
 
@@ -4053,7 +4053,7 @@ def _imagen_a_pdf_fast(img: Path, margin_mm: float = 10.0) -> Path:
     layout_fun = img2pdf.get_layout_fun(
         pagesize=a4,
         border=border,
-        fit=img2pdf.FitMode.SHRINK_TO_FIT,  # nunca agranda más de A4; conserva relación de aspecto
+        fit=img2pdf.FitMode.SHRINK_TO_FIT,  # nunca agranda mÃ¡s de A4; conserva relaciÃ³n de aspecto
         auto_orient=True,
     )
     with open(pdf, "wb") as f:
@@ -4087,19 +4087,19 @@ def _ensure_pdf_fast(path: Path) -> Path:
                 logging.info(f"[CNV:OK ] {pdf.name}")
                 return pdf
         except Exception as e:
-            logging.info(f"[CNV:ERR] {path.name} · {e}")
+            logging.info(f"[CNV:ERR] {path.name} Â· {e}")
     return path
 
 
 def _open_sac_desde_portal_teletrabajo(page):
     """
     *** SOLO Teletrabajo ***
-    Abre el menú 'Aplicaciones' (img#imgMenuServiciosPrivadas) y entra a 'SAC Multifuero'.
-    Es el flujo que ya te funcionaba y NO usa navegación directa sin proxy.
+    Abre el menÃº 'Aplicaciones' (img#imgMenuServiciosPrivadas) y entra a 'SAC Multifuero'.
+    Es el flujo que ya te funcionaba y NO usa navegaciÃ³n directa sin proxy.
     """
     logging.info("[NAV] Intentando abrir 'SAC Multifuero' desde portal actual")
     import re
-    # Si ya estamos en PublicApps.aspx (bajo proxy), delegá
+    # Si ya estamos en PublicApps.aspx (bajo proxy), delegÃ¡
     if re.search(r"/PortalWeb/(Pages/)?PublicApps\.aspx", (page.url or ""), re.I):
         return _open_sac_desde_portal_intranet(page)
     try:
@@ -4123,7 +4123,7 @@ def _open_sac_desde_portal_teletrabajo(page):
     if not trigger:
         _debug_dump(page, "no_trigger_aplicaciones")
         raise RuntimeError(
-            "No encontré el botón 'Aplicaciones' (id imgMenuServiciosPrivadas)."
+            "No encontrÃ© el botÃ³n 'Aplicaciones' (id imgMenuServiciosPrivadas)."
         )
 
     try:
@@ -4137,7 +4137,7 @@ def _open_sac_desde_portal_teletrabajo(page):
         try:
             trigger.click(force=True)
         except Exception:
-            logging.info("[NAV] Link a 'SAC Multifuero' localizado; abriendo…")
+            logging.info("[NAV] Link a 'SAC Multifuero' localizado; abriendoâ€¦")
             try:
                 trigger.evaluate("el => el.click()")
             except Exception:
@@ -4153,10 +4153,10 @@ def _open_sac_desde_portal_teletrabajo(page):
     if not link or not link.count():
         _debug_dump(page, "apps_menu_sin_sac")
         raise RuntimeError(
-            "No encontré el enlace a 'SAC Multifuero' dentro de Aplicaciones."
+            "No encontrÃ© el enlace a 'SAC Multifuero' dentro de Aplicaciones."
         )
 
-    # Puede ser popup o misma pestaña
+    # Puede ser popup o misma pestaÃ±a
     try:
         with page.context.expect_page() as pop:
             link.click()
@@ -4174,7 +4174,7 @@ def _open_sac_desde_portal_teletrabajo(page):
     except Exception:
         pass
 
-    # Último recurso: seguir href/onclick del link
+    # Ãšltimo recurso: seguir href/onclick del link
     try:
         href, onclick = link.evaluate(
             "el => [el.getAttribute('href'), el.getAttribute('onclick') || '']"
@@ -4194,14 +4194,14 @@ def _open_sac_desde_portal_teletrabajo(page):
 
     _debug_dump(page, "click_sac_fail")
     raise RuntimeError(
-        "No pude abrir 'SAC Multifuero' pese a desplegar el menú (ver click_sac_fail.*)."
+        "No pude abrir 'SAC Multifuero' pese a desplegar el menÃº (ver click_sac_fail.*)."
     )
 
 
 def _open_sac_desde_portal_intranet(page):
     """
-    *** SOLO Intranet directa / página ya proxificada ***
-    Busca enlace 'SAC Multifuero'. Si no aparece, navega al menú del SAC:
+    *** SOLO Intranet directa / pÃ¡gina ya proxificada ***
+    Busca enlace 'SAC Multifuero'. Si no aparece, navega al menÃº del SAC:
     - con proxy_prefix si estamos proxificados,
     - o directo si la URL actual ya es tribunales.gov.ar.
     """
@@ -4263,7 +4263,7 @@ def _open_sac_desde_portal_intranet(page):
     if not proxy_prefix and not _is_tribunales(page.url):
         _debug_dump(page, "sac_fallback_blocked_no_proxy")
         raise RuntimeError(
-            "No hallé link a SAC y no hay proxy activo; evito navegación directa en Teletrabajo."
+            "No hallÃ© link a SAC y no hay proxy activo; evito navegaciÃ³n directa en Teletrabajo."
         )
 
     dest = (proxy_prefix or "") + "https://www.tribunales.gov.ar/SacInterior/Menu/Default.aspx"
@@ -4282,7 +4282,7 @@ def _open_sac_desde_portal(page):
 
 def _ir_a_radiografia(sac):
     """
-    Preferir el menú de SAC ? “Radiografía”. Si no aparece, usar URL con el mismo /proxy/.
+    Preferir el menÃº de SAC ? â€œRadiografÃ­aâ€. Si no aparece, usar URL con el mismo /proxy/.
     """
     import re
 
@@ -4292,7 +4292,7 @@ def _ir_a_radiografia(sac):
         pass
 
     try:
-        matcher = re.compile(r"Radiograf[íi]a", re.I)
+        matcher = re.compile(r"Radiograf[Ã­i]a", re.I)
         link = sac.get_by_role("link", name=matcher).first
         if not link.count():
             link = sac.locator("a", has_text=matcher).first
@@ -4338,7 +4338,7 @@ def abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_p
             page.wait_for_load_state("networkidle")
             _handle_loginconfirm(page)
         except Exception as e:
-            # Si no hay formulario pero sí vemos el portal, seguimos; si no, re-lanzamos
+            # Si no hay formulario pero sÃ­ vemos el portal, seguimos; si no, re-lanzamos
             if not _is_portal_grid(page):
                 raise
 
@@ -4372,12 +4372,12 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
                 return fn()
             except Exception as e:
                 last = e
-                logging.info(f"[OPEN:{label}:ERR] intento {i+1} · {e}")
+                logging.info(f"[OPEN:{label}:ERR] intento {i+1} Â· {e}")
                 try:
                     page.wait_for_timeout(800 * (i + 1))
                 except Exception:
                     pass
-        raise last if last else RuntimeError(f"{label} falló")
+        raise last if last else RuntimeError(f"{label} fallÃ³")
 
     # 1) Si hay credenciales de Tele, ir por Tele primero
     if prefer_tele:
@@ -4389,9 +4389,9 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
                 "TELETRABAJO",
             )
         except Exception as e:
-            logging.info("[OPEN] Teletrabajo falló; pruebo Intranet directa")
+            logging.info("[OPEN] Teletrabajo fallÃ³; pruebo Intranet directa")
             if not ALLOW_DIRECT_INTRANET:
-                raise e  # si ALLOW_DIRECT_INTRANET=1, recién ahí proba el bloque de INTRANET
+                raise e  # si ALLOW_DIRECT_INTRANET=1, reciÃ©n ahÃ­ proba el bloque de INTRANET
 
     # 2) Intranet directa
     try:
@@ -4400,7 +4400,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
             pg.set_default_timeout(int(os.getenv("OPEN_TIMEOUT_MS", "45000")))
             pg.set_default_navigation_timeout(int(os.getenv("OPEN_NAV_TIMEOUT_MS", "60000")))
 
-            # Si la URL de Intranet no resuelve o está caída, disparamos un error reconocible
+            # Si la URL de Intranet no resuelve o estÃ¡ caÃ­da, disparamos un error reconocible
             try:
                 pg.goto(INTRANET_LOGIN_URL, wait_until="domcontentloaded")
             except Exception as e:
@@ -4417,7 +4417,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
 
         return _try_open(_open_intranet, "INTRANET")
     except Exception as e:
-        # Fallback explícito a Teletrabajo si Intranet no está disponible
+        # Fallback explÃ­cito a Teletrabajo si Intranet no estÃ¡ disponible
         if tele_user and tele_pass:
             logging.info("[OPEN] INTRANET inaccesible; redirijo a Teletrabajo")
             return _try_open(
@@ -4429,7 +4429,7 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
         # Si no hay credenciales de Teletrabajo, re-lanzamos el error original
         raise
 
-    # 3) Último intento por Tele si no lo probamos primero
+    # 3) Ãšltimo intento por Tele si no lo probamos primero
     if not prefer_tele and tele_user and tele_pass:
         return _try_open(
             lambda: abrir_sac_via_teletrabajo(context, tele_user, tele_pass, intra_user, intra_pass),
@@ -4441,8 +4441,8 @@ def abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass):
 
 def _cerrar_indice_libro(libro):
     """
-    Cierra el panel Índice usando los toggles de la UI (sin ocultarlo por CSS).
-    Soporta distintas variantes (pestaña vertical, hamburguesa, chevrons, etc.).
+    Cierra el panel Ãndice usando los toggles de la UI (sin ocultarlo por CSS).
+    Soporta distintas variantes (pestaÃ±a vertical, hamburguesa, chevrons, etc.).
     """
     S = _libro_scope(libro)
 
@@ -4451,7 +4451,7 @@ def _cerrar_indice_libro(libro):
         if not nav.count():
             return False
         try:
-            # visible y con ancho útil (>40px para distinguir handle)
+            # visible y con ancho Ãºtil (>40px para distinguir handle)
             bb = nav.bounding_box()
             return bool(bb and bb.get("width", 0) > 40 and nav.is_visible())
         except Exception:
@@ -4461,17 +4461,17 @@ def _cerrar_indice_libro(libro):
         return
 
     toggles = [
-        "text=/^\\s*Índice\\s*$/i",
-        "button:has-text('Índice')",
-        "a:has-text('Índice')",
+        "text=/^\\s*Ãndice\\s*$/i",
+        "button:has-text('Ãndice')",
+        "a:has-text('Ãndice')",
         ".indice-toggle, .indice .toggle, .indice [role=button]",
         ".nav-container .navbar-toggler",
         ".nav-container .fa-chevron-left, .nav-container .fa-angle-left, .nav-container .fa-angle-double-left",
         ".btn-indice, #btnIndice, #indiceTab, #indice-tab",
-        "xpath=//*[contains(translate(normalize-space(.),'ÍNDICE','índice'),'índice')]",
+        "xpath=//*[contains(translate(normalize-space(.),'ÃNDICE','Ã­ndice'),'Ã­ndice')]",
     ]
 
-    # Probar múltiples toggles un par de veces
+    # Probar mÃºltiples toggles un par de veces
     for _ in range(6):
         if not visible():
             break
@@ -4501,15 +4501,15 @@ def _cerrar_indice_libro(libro):
 def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     """
     Intenta obtener el PDF del 'Expediente como Libro'.
-    1) Click en 'Imprimir / Imprimir Selección' y captura download si el sitio genera PDF.
-    2) Si abre el diálogo del navegador (no automatable), fallback: PDF por CDP en un Chromium
-       HEADLESS con el mismo estado de sesión.
+    1) Click en 'Imprimir / Imprimir SelecciÃ³n' y captura download si el sitio genera PDF.
+    2) Si abre el diÃ¡logo del navegador (no automatable), fallback: PDF por CDP en un Chromium
+       HEADLESS con el mismo estado de sesiÃ³n.
     """
     S = _libro_scope(libro)
     _cerrar_indice_libro(libro)
     out = tmp_dir / "libro.pdf"
 
-    # Asegurar foco y scrollear al fondo (botón suele estar abajo a la derecha)
+    # Asegurar foco y scrollear al fondo (botÃ³n suele estar abajo a la derecha)
     try:
         libro.bring_to_front()
     except Exception:
@@ -4520,11 +4520,11 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     except Exception:
         pass
 
-    # 1) Intento: botón que dispare download del backend
+    # 1) Intento: botÃ³n que dispare download del backend
     btn_selectors = [
-        "text=/\\bImprimir Selección\\b/i",
+        "text=/\\bImprimir SelecciÃ³n\\b/i",
         "text=/\\bImprimir\\b/i",
-        "button:has-text('Imprimir Selección')",
+        "button:has-text('Imprimir SelecciÃ³n')",
         "button:has-text('Imprimir')",
         "a[onclick*='Imprimir']",
         "button[onclick*='Imprimir']",
@@ -4547,7 +4547,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
                         loc.evaluate("el => el.click()")
                 d = dl.value
                 d.save_as(out)
-                # después de d.save_as(out) o de hp.pdf(...)
+                # despuÃ©s de d.save_as(out) o de hp.pdf(...)
                 if out.exists() and out.stat().st_size > 1024:
                     if _pdf_es_login_portal(out):
                         logging.info(
@@ -4561,7 +4561,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
                     logging.info(f"[PRINT:DL] PDF libro guardado: {out.name}")
                     return out
             except Exception:
-                # Si abrió el diálogo del navegador, no habrá download ? seguimos al plan B
+                # Si abriÃ³ el diÃ¡logo del navegador, no habrÃ¡ download ? seguimos al plan B
                 pass
         except Exception:
             continue
@@ -4601,7 +4601,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     hp.emulate_media(media="print")
     hp.pdf(path=str(out), format="A4", print_background=True, prefer_css_page_size=True)
 
-    # Si la exportación headless terminó en el login, descartalo
+    # Si la exportaciÃ³n headless terminÃ³ en el login, descartalo
     try:
         if out.exists() and _pdf_es_login_portal(out):
             logging.info("[PRINT:HEADLESS] Detectado login en PDF; se descarta.")
@@ -4610,7 +4610,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     except Exception:
         pass
 
-    # 2) Fallback HEADLESS: mismo estado de sesión + Page.pdf()
+    # 2) Fallback HEADLESS: mismo estado de sesiÃ³n + Page.pdf()
     try:
         state_file = tmp_dir / "state.json"
         context.storage_state(path=str(state_file))
@@ -4622,7 +4622,7 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
         )
         hp = hctx.new_page()
         hp.goto(libro.url, wait_until="networkidle")
-        # Cargar/expandir como hicimos en la pestaña visible
+        # Cargar/expandir como hicimos en la pestaÃ±a visible
         try:
             _expandir_y_cargar_todo_el_libro(hp)
         except Exception:
@@ -4648,15 +4648,15 @@ def _imprimir_libro_a_pdf(libro, context, tmp_dir: Path, p) -> Path | None:
     except Exception as e:
         logging.info(f"[PRINT:HEADLESS-ERR] {e}")
 
-    logging.info("[PRINT] No pude obtener el PDF del Libro ni por botón ni por fallback headless.")
+    logging.info("[PRINT] No pude obtener el PDF del Libro ni por botÃ³n ni por fallback headless.")
     return None
 
 
 def _guardar_libro_como_html(libro, tmp_dir: Path) -> Path | None:
     """
     Snapshot del 'Expediente como Libro' a un .html en disco, parecido a
-    'Guardar como… / Página web completa'. Inyecta <base> (para recursos relativos vía /proxy/)
-    y CSS de impresión para ocultar el índice/menus.
+    'Guardar comoâ€¦ / PÃ¡gina web completa'. Inyecta <base> (para recursos relativos vÃ­a /proxy/)
+    y CSS de impresiÃ³n para ocultar el Ã­ndice/menus.
     """
     try:
         S = _libro_scope(libro)
@@ -4669,7 +4669,7 @@ def _guardar_libro_como_html(libro, tmp_dir: Path) -> Path | None:
         proxy_prefix = _get_proxy_prefix(libro)
         base_href = proxy_prefix + "https://www.tribunales.gov.ar/"
 
-        # CSS para vista de impresión
+        # CSS para vista de impresiÃ³n
         extra_css = """
             @page { size: A4; margin: 12mm; }
             html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -4713,7 +4713,7 @@ def _convertir_html_a_pdf(html_path: Path, context, p, tmp_dir: Path) -> Path | 
     try:
         out_pdf = tmp_dir / "libro_desde_html.pdf"
 
-        # Guardamos el estado de sesión del contexto actual
+        # Guardamos el estado de sesiÃ³n del contexto actual
         state_file = tmp_dir / "state.json"
         context.storage_state(path=str(state_file))
 
@@ -4781,10 +4781,10 @@ def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path
         .enable-print { display: block; }
         .font-weight-bold { font-weight: bold; }
         .dataLabel { margin-right: 10px; display: inline; }
-        /* Evitar sólo cortes feos en imágenes/firmas/mesas; permitir flujo normal */
+        /* Evitar sÃ³lo cortes feos en imÃ¡genes/firmas/mesas; permitir flujo normal */
         img, table.signature-block { page-break-inside: avoid; break-inside: avoid; }
         table { page-break-inside: avoid; break-inside: avoid-page; page-break-after: avoid; }
-        /* ? mantiene junto el cuadro de 'Protocolo…' con el primer bloque siguiente si hay espacio */
+        /* ? mantiene junto el cuadro de 'Protocoloâ€¦' con el primer bloque siguiente si hay espacio */
     """
     html = f"""<!doctype html>
 <html>
@@ -4842,19 +4842,19 @@ def _render_operacion_a_pdf_paginas(libro, op_id: str, context, p, tmp_dir: Path
 def _render_caratula_a_pdf(libro, context, p, tmp_dir: Path, hctx=None, hp=None) -> Path | None:
     """
     Nueva forma: NO navega a ImprimirCaratula.aspx.
-    Toma el HTML del bloque #caratula dentro del Libro, lo aísla en una página en blanco
-    con <base> al proxy y lo exporta a PDF en headless. Así no aparece el índice ni overlays
+    Toma el HTML del bloque #caratula dentro del Libro, lo aÃ­sla en una pÃ¡gina en blanco
+    con <base> al proxy y lo exporta a PDF en headless. AsÃ­ no aparece el Ã­ndice ni overlays
     y se evita el proxy error.
     """
     S = _libro_scope(libro)
 
-    # 1) Asegurar que la carátula esté poblada por el front-end del SAC
+    # 1) Asegurar que la carÃ¡tula estÃ© poblada por el front-end del SAC
     try:
         S.evaluate("() => { try { if (window.Encabezado) Encabezado(); } catch(e) {} }")
     except Exception:
         pass
 
-    # 2) Tomar el HTML del bloque de carátula (outerHTML)
+    # 2) Tomar el HTML del bloque de carÃ¡tula (outerHTML)
     html = None
     for sel in ("#caratula", "#encabezado", "div[id*='carat']"):
         try:
@@ -4868,12 +4868,12 @@ def _render_caratula_a_pdf(libro, context, p, tmp_dir: Path, hctx=None, hp=None)
     if not html:
         return None
 
-    # 3) Construir documento autónomo con base al proxy (para recursos relativos)
+    # 3) Construir documento autÃ³nomo con base al proxy (para recursos relativos)
     base_href = _get_proxy_prefix(libro) + "https://www.tribunales.gov.ar/"
     css = """
         @page { size: A4; margin: 12mm; }
         html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        /* Sin sombras ni menús; aseguramos ancho fluido */
+        /* Sin sombras ni menÃºs; aseguramos ancho fluido */
         * { box-shadow: none !important; }
         body { width: auto !important; }
     """
@@ -4923,7 +4923,7 @@ def _render_caratula_a_pdf(libro, context, p, tmp_dir: Path, hctx=None, hp=None)
             logging.info(f"[CARATULA:REUSE-ERR] {e}")
             return None
 
-    # 5) Limpieza opcional si hubiera página en blanco
+    # 5) Limpieza opcional si hubiera pÃ¡gina en blanco
     if out.exists() and out.stat().st_size > 1024:
         try:
             return _pdf_sin_blancos(out)
@@ -4936,7 +4936,7 @@ def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        logging.info("[BLANK] PyMuPDF no disponible; omito limpieza de páginas en blanco.")
+        logging.info("[BLANK] PyMuPDF no disponible; omito limpieza de pÃ¡ginas en blanco.")
         return pdf_path
 
     doc = fitz.open(str(pdf_path))
@@ -4976,21 +4976,21 @@ def _pdf_sin_blancos(pdf_path: Path, thresh: float = 0.995) -> Path:
 def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
                    numero_inicial: int = 1, fijo: str | None = None) -> Path:
     """
-    Estampa numeración de fojas (arriba-derecha) en el PDF:
-      - start_after: páginas iniciales SIN numerar (1 = dejar carátula sin número)
-      - cada_dos: si True, numera sólo una de cada dos páginas (recto)
+    Estampa numeraciÃ³n de fojas (arriba-derecha) en el PDF:
+      - start_after: pÃ¡ginas iniciales SIN numerar (1 = dejar carÃ¡tula sin nÃºmero)
+      - cada_dos: si True, numera sÃ³lo una de cada dos pÃ¡ginas (recto)
       - numero_inicial: valor inicial (1 por defecto)
-      - fijo: texto fijo (si querés que siempre diga p.ej. "1")
+      - fijo: texto fijo (si querÃ©s que siempre diga p.ej. "1")
     """
     try:
-        import fitz  # PyMuPDF (rápido)
+        import fitz  # PyMuPDF (rÃ¡pido)
         import unicodedata
 
         doc = fitz.open(str(pdf_in))
         folio = numero_inicial
         for i in range(doc.page_count):
             pg = doc[i]
-            # Evitar foliar páginas que correspondan al índice
+            # Evitar foliar pÃ¡ginas que correspondan al Ã­ndice
             try:
                 raw_text = pg.get_text("text") or ""
                 text_norm = unicodedata.normalize("NFKD", raw_text)
@@ -5002,9 +5002,9 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
             if i <= (start_after - 1):
                 continue
             if cada_dos and ((i - start_after) % 2 == 1):
-                continue  # sólo una cara por hoja
+                continue  # sÃ³lo una cara por hoja
             margen = 18
-            # tamaño de letra proporcional (12–18 pt)
+            # tamaÃ±o de letra proporcional (12â€“18 pt)
             try:
                 sz = max(12, min(18, pg.rect.height * 0.018))
             except Exception:
@@ -5055,7 +5055,7 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
                 texto = fijo if fijo is not None else str(folio)
                 tw = pdfmetrics.stringWidth(texto, "Helvetica-Bold", sz)
                 x = max(18, pw - 18 - tw)
-                y = ph - 18 - sz  # desde abajo, para “arriba”
+                y = ph - 18 - sz  # desde abajo, para â€œarribaâ€
                 c.drawString(x, y, texto)
                 c.save()
                 overlay = PdfReader(str(tmp)).pages[0]
@@ -5078,7 +5078,7 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
 
 # ----------------------- DESCARGA PRINCIPAL ----------------------------
 def _env_true(name: str, default="0"):
-    return os.getenv(name, default).lower() in ("1", "true", "t", "yes", "y", "si", "sí")
+    return os.getenv(name, default).lower() in ("1", "true", "t", "yes", "y", "si", "sÃ­")
 
 
 # ----------------------- DESCARGA PRINCIPAL ----------------------------
@@ -5119,7 +5119,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             logging.info("[NAV] Contexto de navegador creado")
         else:
             # Evitar grabar video por defecto: impacta mucho en performance.
-            # Si necesitás video, exportá RECORD_VIDEO=1
+            # Si necesitÃ¡s video, exportÃ¡ RECORD_VIDEO=1
             if _env_true("RECORD_VIDEO", "0"):
                 vid_dir = temp_dir / "video"
                 vid_dir.mkdir(parents=True, exist_ok=True)
@@ -5136,17 +5136,17 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
         try:
             etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
-            # 1) Login ? Radiografía
+            # 1) Login ? RadiografÃ­a
             sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
-            logging.info(f"[SAC] Abierto SAC / Radiografía: url={sac.url}")
+            logging.info(f"[SAC] Abierto SAC / RadiografÃ­a: url={sac.url}")
 
             # 2) Buscar expediente
-            etapa(f"Entrando a Radiografía y buscando expediente N° {nro_exp}")
+            etapa(f"Entrando a RadiografÃ­a y buscando expediente NÂ° {nro_exp}")
             _fill_radiografia_y_buscar(sac, nro_exp)
-            logging.info(f"[RADIO] Buscado expediente N° {nro_exp}")
+            logging.info(f"[RADIO] Buscado expediente NÂ° {nro_exp}")
 
             if "SacInterior/Login.aspx" in sac.url:
-                messagebox.showerror("Error de sesión", "El SAC pidió re-login. Probá nuevamente.")
+                messagebox.showerror("Error de sesiÃ³n", "El SAC pidiÃ³ re-login. ProbÃ¡ nuevamente.")
                 return
 
             if "PortalWeb/LogIn/Login.aspx" in (sac.url or ""):
@@ -5154,32 +5154,32 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 sac = _ir_a_radiografia(sac)
                 _fill_radiografia_y_buscar(sac, nro_exp)
 
-            # >>> GATE DESDE RADIOGRAFÍA <<<
+            # >>> GATE DESDE RADIOGRAFÃA <<<
             CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
-            etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
+            etapa("Esperando carga de RadiografÃ­a y verificando acceso a operaciones")
 
-            # Esperar a que cargue la vista (carátula + grillas)
+            # Esperar a que cargue la vista (carÃ¡tula + grillas)
             _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "150")))
-            logging.info("[RADIO] Vista de Radiografía cargada (carátula/operaciones/adjuntos visibles)")
+            logging.info("[RADIO] Vista de RadiografÃ­a cargada (carÃ¡tula/operaciones/adjuntos visibles)")
 
-            # Listar operaciones rápido (con frames)
+            # Listar operaciones rÃ¡pido (con frames)
             op_ids_rad = _listar_ops_ids_radiografia(
                 sac,
                 wait_ms=int(os.getenv("RADIO_OPS_WAIT_MS", "150")),
                 scan_frames=True,
             )
 
-            # Verificación de acceso:
+            # VerificaciÃ³n de acceso:
             acceso_ok = False
             if op_ids_rad:
                 ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
-                # 1) Si alguna operación probada está denegada ? abortar
+                # 1) Si alguna operaciÃ³n probada estÃ¡ denegada ? abortar
                 if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
-                    logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
+                    logging.info("[SEC] RadiografÃ­a mostrÃ³ 'sin permisos' en al menos una operaciÃ³n. Abortando.")
                     messagebox.showwarning(
                         "Sin acceso",
-                        "No tenés permisos para visualizar el contenido de este expediente "
-                        "(al menos una operación está bloqueada). No se descargará nada.",
+                        "No tenÃ©s permisos para visualizar el contenido de este expediente "
+                        "(al menos una operaciÃ³n estÃ¡ bloqueada). No se descargarÃ¡ nada.",
                     )
                     return
                 # 2) Al menos una visible con contenido
@@ -5191,13 +5191,13 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 logging.info("[SEC] No hay acceso real al contenido de las operaciones (bloqueando descarga).")
                 messagebox.showwarning(
                     "Sin acceso",
-                    "No tenés permisos para visualizar el contenido del expediente (operaciones bloqueadas). "
-                    "No se descargará nada.",
+                    "No tenÃ©s permisos para visualizar el contenido del expediente (operaciones bloqueadas). "
+                    "No se descargarÃ¡ nada.",
                 )
                 return
-            # <<< FIN GATE DESDE RADIOGRAFÍA >>>
+            # <<< FIN GATE DESDE RADIOGRAFÃA >>>
 
-            # === 3.a) NUEVO: fechas por operación + timeline ===
+            # === 3.a) NUEVO: fechas por operaciÃ³n + timeline ===
             op_fecha_map, orden_fechas = _mapear_fechas_operaciones_radiografia(sac)
             from collections import defaultdict
             timeline = defaultdict(list)   # { 'dd/mm/aaaa' -> [(Path, header), ...] }
@@ -5215,7 +5215,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     return
                 ya_agregados.add(key)
 
-                # Limpieza de páginas en blanco (best-effort)
+                # Limpieza de pÃ¡ginas en blanco (best-effort)
                 try:
                     pth = _pdf_sin_blancos(pth)
                 except Exception:
@@ -5233,7 +5233,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             if "ExpedienteLibro.aspx" not in (libro.url or ""):
                 libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
 
-            etapa("Cargando índice del Libro")
+            etapa("Cargando Ã­ndice del Libro")
             ops = _expandir_y_cargar_todo_el_libro(libro)
             # Fallback de fechas por operacion desde el Indice del Libro
             try:
@@ -5258,13 +5258,13 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     orden_fechas = orden_fechas_alt
             except Exception:
                 pass
-            logging.info(f"[LIBRO] Índice cargado · operaciones visibles={len(ops)}")
+            logging.info(f"[LIBRO] Ãndice cargado Â· operaciones visibles={len(ops)}")
             if not ops:
-                logging.info("[SEC] La UI no muestra operaciones en el Índice. Se continúa SIN operaciones.")
+                logging.info("[SEC] La UI no muestra operaciones en el Ãndice. Se continÃºa SIN operaciones.")
                 ops = []
-            logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el índice.")
+            logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el Ã­ndice.")
 
-            # 4) Preparar contexto headless reutilizable para HTML->PDF (carátula + operaciones)
+            # 4) Preparar contexto headless reutilizable para HTML->PDF (carÃ¡tula + operaciones)
             hbrowser = hctx = hp = None
             try:
                 state_print = temp_dir / "state_print.json"
@@ -5284,29 +5284,29 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             except Exception:
                 hbrowser = hctx = hp = None
 
-            # 4) Carátula (guardada aparte para que quede primera)
-            etapa("Renderizando carátula del expediente")
+            # 4) CarÃ¡tula (guardada aparte para que quede primera)
+            etapa("Renderizando carÃ¡tula del expediente")
             try:
                 caratula_pdf = _render_caratula_a_pdf(libro, context, p, temp_dir, hctx=hctx, hp=hp)
                 if caratula_pdf and caratula_pdf.exists():
-                    _mf(f"CARATULA · {caratula_pdf.name}")
+                    _mf(f"CARATULA Â· {caratula_pdf.name}")
                     caratula_block = (caratula_pdf, None)
                     logging.info("[CARATULA] capturada")
                 else:
-                    logging.info("[CARATULA] no se pudo capturar (se continúa)")
+                    logging.info("[CARATULA] no se pudo capturar (se continÃºa)")
             except Exception as e:
                 logging.info(f"[CARATULA:ERR] {e}")
 
-            # 5) Adjuntos del GRID (mapeados por operación)
-            etapa("Descargando adjuntos desde Radiografía (grilla)")
+            # 5) Adjuntos del GRID (mapeados por operaciÃ³n)
+            etapa("Descargando adjuntos desde RadiografÃ­a (grilla)")
             try:
                 sac.bring_to_front()
             except Exception:
                 pass
             pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path, ...]}
-            logging.info(f"[ADJ/GRID] Mapeo adjuntos por operación: { {k: len(v) for k, v in pdfs_grid.items()} }")
+            logging.info(f"[ADJ/GRID] Mapeo adjuntos por operaciÃ³n: { {k: len(v) for k, v in pdfs_grid.items()} }")
 
-            # Helper: adjuntos de operación (Libro + Grid) — se depositan en el día de la operación
+            # Helper: adjuntos de operaciÃ³n (Libro + Grid) â€” se depositan en el dÃ­a de la operaciÃ³n
             def _agregar_adjuntos_de_op(op_id: str, titulo: str, fecha_op: str | None):
                 pdfs_op: list[Path] = []
                 try:
@@ -5322,29 +5322,29 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     )
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                         continue
-                    _mf(f"ADJUNTO · {titulo} · {pth.name}")
-                    hdr = (f"ADJUNTO · {titulo}") if STAMP else None
+                    _mf(f"ADJUNTO Â· {titulo} Â· {pth.name}")
+                    hdr = (f"ADJUNTO Â· {titulo}") if STAMP else None
                     hdr = (f"ADJUNTO - {titulo}") if STAMP else None
                     _push_pdf(pth, hdr, fecha=fecha_op, toc_title=f"ADJUNTO - {titulo}")
 
-            # 6) Operaciones (render por páginas sólo si están visibles)
+            # 6) Operaciones (render por pÃ¡ginas sÃ³lo si estÃ¡n visibles)
             op_pdfs_capturados = 0
             etapa("Procesando operaciones visibles del Libro")
             for o in ops:
                 op_id = o["id"]
                 op_tipo = o["tipo"]
-                titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
+                titulo = (o.get("titulo") or "").strip() or f"OperaciÃ³n {op_id}"
                 fecha_op = op_fecha_map.get(op_id, None)  # fecha desde la grilla
                 logging.info(
-                    f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}' · fecha='{fecha_op or '-'}'"
+                    f"[OP] Procesando operaciÃ³n Â· id={op_id} Â· tipo='{op_tipo}' Â· titulo='{titulo}' Â· fecha='{fecha_op or '-'}'"
                 )
 
-                # Mostrar y chequear visibilidad real del contenedor de la operación
+                # Mostrar y chequear visibilidad real del contenedor de la operaciÃ³n
                 _mostrar_operacion(libro, op_id, op_tipo)
                 S = _libro_scope(libro)
                 cont = _buscar_contenedor_operacion(S, op_id)
                 if not cont:
-                    logging.info(f"[OP] {op_id}: contenedor no encontrado; se continúa con adjuntos.")
+                    logging.info(f"[OP] {op_id}: contenedor no encontrado; se continÃºa con adjuntos.")
                     _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
                     continue
 
@@ -5358,7 +5358,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
                 if not visible:
                     logging.info(
-                        f"[OP] {op_id}: contenedor no visible; se omite render de operación (se agregan adjuntos igual)."
+                        f"[OP] {op_id}: contenedor no visible; se omite render de operaciÃ³n (se agregan adjuntos igual)."
                     )
                     _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
                     continue
@@ -5371,14 +5371,14 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     pdf_op = None
 
                 if pdf_op and pdf_op.exists():
-                    _mf(f"OPERACION · {titulo} · {pdf_op.name}")
+                    _mf(f"OPERACION Â· {titulo} Â· {pdf_op.name}")
                     _push_pdf(pdf_op, None, fecha=fecha_op, toc_title=f"OPERACION - {titulo}")
                     op_pdfs_capturados += 1
-                    logging.info(f"[OP] {op_id}: agregado (renderer de páginas)")
+                    logging.info(f"[OP] {op_id}: agregado (renderer de pÃ¡ginas)")
                 else:
-                    logging.info(f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos).")
+                    logging.info(f"[OP] {op_id}: no se pudo renderizar (se continÃºa con adjuntos).")
 
-                # Adjuntos de esta operación (con la misma fecha de la operación)
+                # Adjuntos de esta operaciÃ³n (con la misma fecha de la operaciÃ³n)
                 _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
 
             # Cerrar contexto headless reutilizado
@@ -5398,14 +5398,14 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             except Exception:
                 pass
 
-            # 5b) Informes técnicos — DESPUÉS de operaciones ? quedan al final del día
-            etapa("Descargando informes técnicos")
+            # 5b) Informes tÃ©cnicos â€” DESPUÃ‰S de operaciones ? quedan al final del dÃ­a
+            etapa("Descargando informes tÃ©cnicos")
             try:
                 sac.bring_to_front()
             except Exception:
                 pass
             informes_tecnicos = _descargar_informes_tecnicos(sac, temp_dir)
-            logging.info(f"[INF] Informes técnicos descargados: {len(informes_tecnicos)}")
+            logging.info(f"[INF] Informes tÃ©cnicos descargados: {len(informes_tecnicos)}")
             for it_path, it_fecha in informes_tecnicos:
                 pth = (
                     it_path
@@ -5414,12 +5414,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 )
                 if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                     continue
-                _mf(f"INF_TEC · {it_fecha} · {pth.name}")
-                hdr = (f"INFORME TÉCNICO · {it_fecha}") if STAMP else None
+                _mf(f"INF_TEC Â· {it_fecha} Â· {pth.name}")
+                hdr = (f"INFORME TÃ‰CNICO Â· {it_fecha}") if STAMP else None
                 toc_it = f"INFORME TECNICO MPF - {it_fecha}" if it_fecha else "INFORME TECNICO MPF"
                 _push_pdf(pth, hdr, fecha=it_fecha, toc_title=toc_it)
 
-                # Extraer anexos embebidos (si existe la función)
+                # Extraer anexos embebidos (si existe la funciÃ³n)
                 try:
                     anexos = _extraer_adjuntos_embebidos(pth, temp_dir) if '_extraer_adjuntos_embebidos' in globals() else []
                 except Exception:
@@ -5432,13 +5432,13 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     )
                     if not an_pdf or not Path(an_pdf).exists() or Path(an_pdf).suffix.lower() != ".pdf":
                         continue
-                    _mf(f"INF_TEC/ANEXO · {it_fecha} · {Path(an_pdf).name}")
-                    hdr_an = (f"INFORME TÉCNICO – ANEXO · {it_fecha}") if STAMP else None
+                    _mf(f"INF_TEC/ANEXO Â· {it_fecha} Â· {Path(an_pdf).name}")
+                    hdr_an = (f"INFORME TÃ‰CNICO â€“ ANEXO Â· {it_fecha}") if STAMP else None
                     hdr_an = (f"INFORME TECNICO - ANEXO - {it_fecha}") if STAMP else None
                     toc_an = f"INFORME TECNICO MPF - ANEXO - {it_fecha}" if it_fecha else "INFORME TECNICO MPF - ANEXO"
                     _push_pdf(Path(an_pdf), hdr_an, fecha=it_fecha, toc_title=toc_an)
             if op_pdfs_capturados == 0:
-                logging.info("[FALLBACK] Ninguna operación pudo renderizarse; intento PDF del Libro.")
+                logging.info("[FALLBACK] Ninguna operaciÃ³n pudo renderizarse; intento PDF del Libro.")
                 libro_pdf = _imprimir_libro_a_pdf(libro, context, temp_dir, p)
                 if not (libro_pdf and libro_pdf.exists() and libro_pdf.stat().st_size > 1024):
                     html_snap = _guardar_libro_como_html(libro, temp_dir)
@@ -5449,12 +5449,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         libro_pdf = _pdf_sin_blancos(libro_pdf)
                     except Exception:
                         pass
-                    _mf(f"LIBRO · {libro_pdf.name}")
+                    _mf(f"LIBRO Â· {libro_pdf.name}")
                     _push_pdf(libro_pdf, None, fecha=None, toc_title="LIBRO")
                 else:
-                    logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
+                    logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningÃºn mÃ©todo.")
 
-            # 8) Adjuntos sin operación mapeada ? al final (sin fecha)
+            # 8) Adjuntos sin operaciÃ³n mapeada ? al final (sin fecha)
             # 5c) Informes Registro Nacional de Reincidencia (RNR)
             etapa("Descargando informes RNR")
             try:
@@ -5481,7 +5481,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
             adj_sin = pdfs_grid.get("__SIN_OP__", [])
             if adj_sin:
-                logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
+                logging.info(f"[ADJ] SIN_OP Â· {len(adj_sin)} archivo(s)")
                 for pdf in adj_sin:
                     pth = (
                         pdf
@@ -5490,17 +5490,17 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     )
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                         continue
-                    _mf(f"ADJUNTO · (sin operación) · {pth.name}")
-                    hdr = ("ADJUNTO · (sin operación)") if STAMP else None
+                    _mf(f"ADJUNTO Â· (sin operaciÃ³n) Â· {pth.name}")
+                    hdr = ("ADJUNTO Â· (sin operaciÃ³n)") if STAMP else None
                     _push_pdf(pth, hdr, fecha=None, toc_title=hdr)
 
-            # === 3.e) Construcción final en orden cronológico ===
+            # === 3.e) ConstrucciÃ³n final en orden cronolÃ³gico ===
             hay_algo = any(timeline.values()) or bool(caratula_block)
             if not hay_algo:
                 raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
 
-            # Reordenar listas por fecha para que el índice quede de las
-            # operaciones más antiguas a las más recientes.
+            # Reordenar listas por fecha para que el Ã­ndice quede de las
+            # operaciones mÃ¡s antiguas a las mÃ¡s recientes.
             for k in list(timeline.keys()):
                 timeline[k].reverse()
             def _key_fecha(s: str):
@@ -5519,7 +5519,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             for f in orden_fechas:
                 bloques_final.extend(timeline.get(f, []))
 
-            # 2) Fechas que no estaban en la grilla (p.ej. sólo IT)
+            # 2) Fechas que no estaban en la grilla (p.ej. sÃ³lo IT)
             restantes = [f for f in timeline.keys() if f not in set(orden_fechas) and f != "__NOFECHA__"]
             for f in sorted(restantes, key=_key_fecha):
                 bloques_final.extend(timeline.get(f, []))
@@ -5527,7 +5527,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             # 3) Elementos sin fecha ? al final
             bloques_final.extend(timeline.get("__NOFECHA__", []))
 
-            # 9) Fusión final
+            # 9) FusiÃ³n final
             # Reordenar bloques por fechas con fallback si falta orden desde Radiografia
             try:
                 bloques_final2: list[tuple[Path, str | None]] = []
@@ -5574,26 +5574,26 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     )
                     shutil.move(tmp_out, out)
                 except Exception:
-                    logging.exception("[OCR] Falló OCR final")
+                    logging.exception("[OCR] FallÃ³ OCR final")
 
-            # === FOJAS (numeración de hojas) ===
+            # === FOJAS (numeraciÃ³n de hojas) ===
             try:
-                # Deja la carátula y el índice sin número; numera desde la siguiente,
-                # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
+                # Deja la carÃ¡tula y el Ã­ndice sin nÃºmero; numera desde la siguiente,
+                # sÃ³lo una de cada dos (recto): 1, (sin), 2, (sin)...
                 _agregar_fojas(
                     out,
                     start_after=1 + idx_pages,
                     cada_dos=True,
                     numero_inicial=1,
                 )
-                logging.info("[FOJAS] Numeración de fojas aplicada")
+                logging.info("[FOJAS] NumeraciÃ³n de fojas aplicada")
             except Exception as e:
                 logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
 
             _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques_final)})")
-            logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques_final)}")
+            logging.info(f"[OK] PDF final creado: {out} Â· bloques={len(bloques_final)}")
             etapa("Listo: PDF final creado")
-            messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
+            messagebox.showinfo("Ã‰xito", f"PDF creado en:\n{out}")
 
         finally:
             try:
@@ -5630,7 +5630,7 @@ class ProgressWin(Toplevel):
         try:
             while True:
                 msg = self.q.get_nowait()
-                # Si es una etapa, actualizo el label de estado “en curso”
+                # Si es una etapa, actualizo el label de estado â€œen cursoâ€
                 if msg.startswith("[ETAPA] "):
                     etapa_txt = msg.replace("[ETAPA] ", "").strip()
                     self.lbl.config(text=f"Etapa: {etapa_txt}")
@@ -5656,7 +5656,7 @@ class App:
         Label(master, text="Clave Teletrabajo (si corresponde):").grid(row=1, column=0, sticky="e")
         Label(master, text="Usuario Intranet:").grid(row=2, column=0, sticky="e")
         Label(master, text="Clave Intranet:").grid(row=3, column=0, sticky="e")
-        Label(master, text="Nº Expediente:").grid(row=4, column=0, sticky="e")
+        Label(master, text="NÂº Expediente:").grid(row=4, column=0, sticky="e")
 
         self.tele_user = StringVar(value=os.getenv("TELE_USER", ""))
         self.tele_pwd = StringVar(value=os.getenv("TELE_PASS", ""))
@@ -5685,8 +5685,8 @@ class App:
         ]):
             messagebox.showerror(
                 "Faltan datos",
-                "Completá usuario/clave de Intranet y Nº de expediente. "
-                "Los de Teletrabajo son opcionales (solo si estás por VPN).",
+                "CompletÃ¡ usuario/clave de Intranet y NÂº de expediente. "
+                "Los de Teletrabajo son opcionales (solo si estÃ¡s por VPN).",
             )
             return
 
@@ -5699,7 +5699,7 @@ class App:
         # Ventana de progreso + handler de logging hacia la ventana
         self._log_queue = queue.Queue()
         self._progress_win = ProgressWin(
-            self.btn.master, self._log_queue, title=f"Progreso – Exp. {self.exp.get().strip()}"
+            self.btn.master, self._log_queue, title=f"Progreso â€“ Exp. {self.exp.get().strip()}"
         )
 
         # Si hubiera un handler viejo, lo saco
@@ -5748,7 +5748,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-# Filtro para silenciar logs de diagnóstico detallado de Informes Técnicos.
+# Filtro para silenciar logs de diagnÃ³stico detallado de Informes TÃ©cnicos.
 # Se puede reactivar seteando EXPEDIENTE_DIAG_INFORMES=1 en el entorno.
 class _InfDiagFilter(logging.Filter):
     def filter(self, record):
@@ -5760,7 +5760,7 @@ class _InfDiagFilter(logging.Filter):
             return True
         prefixes = (
             "[INF] Fila ",
-            "[INF] Abriendo sección",
+            "[INF] Abriendo secciÃ³n",
             "[INF] Filas InformesTecnicosMPF:",
             "[INF] Contenedor InformesTecnicosMPF",
         )
@@ -5778,7 +5778,13 @@ _bi.print = _print_to_log
 
 
 def _set_win_appusermodelid(appid="SACDownloader.CBA"):
-    """Para que Windows agrupe en la barra de tareas con el ícono del exe."""
+    # Si no se pudo cargar el ICO directamente, no hacemos nada mÃ¡s.
+
+
+if __name__ == "__main__":
+    # Inicializa la aplicaciÃ³n de escritorio.
+    _set_tk_icon(root)  # usa icono3.ico desde BASE_PATH si estÃ¡ disponible
+
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(appid)
