@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 """
@@ -642,8 +642,11 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     return None
                 return 1 + ((p - skip) // 2)
 
+<<<<<<< Updated upstream
             use_foja_numbers = _env_true("FOJAS", "1")
 
+=======
+>>>>>>> Stashed changes
             page_idx = 0
             idx_page = index_pages[page_idx]
             try:
@@ -671,7 +674,11 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 except Exception:
                     tw_title = fs * max(1, len(t)) * 0.6
                 target_page = start_page + idx_page_count
+<<<<<<< Updated upstream
                 fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
+=======
+                fj = _foja_for_page(target_page)
+>>>>>>> Stashed changes
                 fj_txt = str(fj) if fj is not None else "-"
                 try:
                     tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
@@ -5765,6 +5772,5 @@ if __name__ == "__main__":
     App(root)
     root.mainloop()
 # Nota: Al ejecutar con OCR_MODE=force, los adjuntos siempre salen con capa de texto.
-
 
 
