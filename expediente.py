@@ -642,6 +642,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     return None
                 return 1 + ((p - skip) // 2)
 
+            use_foja_numbers = _env_true("FOJAS", "1")
+
             page_idx = 0
             idx_page = index_pages[page_idx]
             try:
@@ -669,7 +671,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 except Exception:
                     tw_title = fs * max(1, len(t)) * 0.6
                 target_page = start_page + idx_page_count
-                fj = _foja_for_page(target_page)
+                fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
                 fj_txt = str(fj) if fj is not None else "-"
                 try:
                     tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
@@ -5443,6 +5445,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             hay_algo = any(timeline.values()) or bool(caratula_block)
             if not hay_algo:
                 raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
+
+            # Revertir listas por fecha para que el índice quede de las
+            # operaciones más antiguas a las más recientes.
+            for k in list(timeline.keys()):
+                timeline[k].reverse()
+            orden_fechas = list(reversed(orden_fechas))
 
             bloques_final = []  # list of (Path, header, toc_title?)
             if caratula_block:
