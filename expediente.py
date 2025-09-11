@@ -654,6 +654,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             except Exception:
                 pass
             y = y_start
+            toc = []
 
             for title, start_page in entries:
                 if y > ph - margin - 24:
@@ -674,6 +675,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 except Exception:
                     tw_title = fs * max(1, len(t)) * 0.6
                 target_page = start_page + idx_page_count
+                toc.append([1, t, target_page + 1])
                 fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
                 fj_txt = str(fj) if fj is not None else "-"
                 try:
@@ -694,9 +696,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs * 0.4)
                 try:
-                    idx_page.insert_link(
-                        {"kind": fitz.LINK_GOTO, "page": target_page, "from": link_rect}
-                    )
+                    idx_page.add_link(pno=target_page, rect=link_rect, zoom=0)
                 except Exception:
                     try:
                         idx_page.insert_link(
@@ -705,6 +705,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     except Exception:
                         pass
                 y += fs + 8
+
+            try:
+                if toc:
+                    dst.set_toc(toc)
+            except Exception:
+                pass
         except Exception as e:
             try:
                 logging.info(f"[INDICE] error: {e}")
