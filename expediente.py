@@ -615,7 +615,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             pw, ph = first_rect.width, first_rect.height
 
             # Mostrar el índice desde la operación más antigua a la más reciente
-            entries = list(reversed(items_info[1:]))
+            # (los bloques ya vienen ordenados cronológicamente)
+            entries = items_info[1:]
             fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
@@ -4954,20 +4955,25 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
     """
     try:
         import fitz  # PyMuPDF (rápido)
+        import unicodedata
+
         doc = fitz.open(str(pdf_in))
         folio = numero_inicial
         for i in range(doc.page_count):
+            pg = doc[i]
+            # Evitar foliar páginas que correspondan al índice
+            try:
+                raw_text = pg.get_text("text") or ""
+                text_norm = unicodedata.normalize("NFKD", raw_text)
+                text_norm = text_norm.encode("ascii", "ignore").decode("ascii").lower()
+                if "indice" in text_norm:
+                    continue
+            except Exception:
+                pass
             if i <= (start_after - 1):
                 continue
             if cada_dos and ((i - start_after) % 2 == 1):
                 continue  # sólo una cara por hoja
-            pg = doc[i]
-            # Evitar foliar páginas que correspondan al índice
-            try:
-                if "indice" in (pg.get_text("text") or "").lower():
-                    continue
-            except Exception:
-                pass
             margen = 18
             # tamaño de letra proporcional (12–18 pt)
             try:
@@ -4998,16 +5004,21 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
         folio = numero_inicial
         temps = []
         from reportlab.pdfbase import pdfmetrics
+        import unicodedata
         for i, p in enumerate(r.pages):
             pw = float(p.mediabox.width)
             ph = float(p.mediabox.height)
+            try:
+                raw_text = p.extract_text() or ""
+                text_norm = unicodedata.normalize("NFKD", raw_text)
+                text_norm = text_norm.encode("ascii", "ignore").decode("ascii").lower()
+                is_index = "indice" in text_norm
+            except Exception:
+                is_index = False
+            if is_index:
+                w.add_page(p)
+                continue
             if i >= start_after and (not cada_dos or ((i - start_after) % 2 == 0)):
-                try:
-                    if "indice" in (p.extract_text() or "").lower():
-                        w.add_page(p)
-                        continue
-                except Exception:
-                    pass
                 tmp = Path(tempfile.mkstemp(suffix=".foja.pdf")[1])
                 c = canvas.Canvas(str(tmp), pagesize=(pw, ph))
                 sz = max(12, min(18, ph * 0.018))
