@@ -5778,13 +5778,7 @@ _bi.print = _print_to_log
 
 
 def _set_win_appusermodelid(appid="SACDownloader.CBA"):
-    # Si no se pudo cargar el ICO directamente, no hacemos nada más.
-
-
-if __name__ == "__main__":
-    # Inicializa la aplicación de escritorio.
-    _set_tk_icon(root)  # usa icono3.ico desde BASE_PATH si está disponible
-
+    """Establece el AppUserModelID en Windows para usar el ícono de la app."""
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(appid)
@@ -5793,7 +5787,7 @@ if __name__ == "__main__":
 
 
 def _set_tk_icon(root):
-    """Intenta usar .ico; si falla, hace fallback a iconphoto."""
+    """Intenta usar .ico; si falla, hace *fallback* a iconphoto."""
     ico = BASE_PATH / "icono3.ico"
     if not ico.exists():
         return
@@ -5809,9 +5803,14 @@ def _set_tk_icon(root):
         root.iconphoto(True, ImageTk.PhotoImage(img))
     except Exception:
         pass
+    # Si el método anterior falla, no hacemos nada más.
+
+
+if __name__ == "__main__":
+    # Inicializa la aplicación de escritorio.
     _set_win_appusermodelid("SACDownloader.CBA")
     root = Tk()
-    _set_tk_icon(root)  # ? usa icono3.ico desde BASE_PATH (soporta modo frozen)
+    _set_tk_icon(root)  # usa icono3.ico desde BASE_PATH si está disponible
     App(root)
     root.mainloop()
 # Nota: Al ejecutar con OCR_MODE=force, los adjuntos siempre salen con capa de texto.
