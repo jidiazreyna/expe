@@ -615,8 +615,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             pw, ph = first_rect.width, first_rect.height
 
             # Mostrar el índice desde la operación más antigua a la más reciente
-            # (ordenado por la página de inicio de cada bloque en forma descendente)
-            entries = sorted(items_info[1:], key=lambda x: x[1], reverse=True)
+            # (ordenado por la página de inicio de cada bloque en forma ascendente)
+            entries = sorted(items_info[1:], key=lambda x: x[1])
             fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
@@ -5471,11 +5471,17 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
             if not hay_algo:
                 raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
 
-            # Revertir listas por fecha para que el índice quede de las
+            # Reordenar listas por fecha para que el índice quede de las
             # operaciones más antiguas a las más recientes.
             for k in list(timeline.keys()):
                 timeline[k].reverse()
-            orden_fechas = list(reversed(orden_fechas))
+            def _key_fecha(s: str):
+                try:
+                    d, m, a = s.split("/")
+                    return (int(a), int(m), int(d))
+                except Exception:
+                    return (9999, 99, 99)
+            orden_fechas = sorted(orden_fechas, key=_key_fecha)
 
             bloques_final = []  # list of (Path, header, toc_title?)
             if caratula_block:
@@ -5487,12 +5493,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
             # 2) Fechas que no estaban en la grilla (p.ej. sólo IT)
             restantes = [f for f in timeline.keys() if f not in set(orden_fechas) and f != "__NOFECHA__"]
-            def _key_fecha(s: str):
-                try:
-                    d, m, a = s.split("/")
-                    return (int(a), int(m), int(d))
-                except Exception:
-                    return (9999, 99, 99)
             for f in sorted(restantes, key=_key_fecha):
                 bloques_final.extend(timeline.get(f, []))
 
@@ -5506,12 +5506,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 if caratula_block:
                     bloques_final2.append(caratula_block)
                 fechas_keys = [f for f in timeline.keys() if f != "__NOFECHA__"]
-                def _key_fecha(s: str):
-                    try:
-                        d, m, a = s.split("/")
-                        return (int(a), int(m), int(d))
-                    except Exception:
-                        return (9999, 99, 99)
                 if orden_fechas:
                     _set_ord = set(orden_fechas)
                     restantes = [f for f in set(fechas_keys) if f not in _set_ord]
