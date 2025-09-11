@@ -1,0 +1,15 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.log
+
+# Entornos / herramientas
+.venv*/
+ms-playwright/
+tesseract/
+
+# Temporales / binarios / capturas
+*.png
+*.ico
+*.zip
+*.html
