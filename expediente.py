@@ -614,7 +614,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
 
-            entries = items_info[1:]
+            # Mostrar el índice desde la operación más antigua a la más reciente
+            entries = list(reversed(items_info[1:]))
             fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
@@ -4961,6 +4962,12 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
             if cada_dos and ((i - start_after) % 2 == 1):
                 continue  # sólo una cara por hoja
             pg = doc[i]
+            # Evitar foliar páginas que correspondan al índice
+            try:
+                if "indice" in (pg.get_text("text") or "").lower():
+                    continue
+            except Exception:
+                pass
             margen = 18
             # tamaño de letra proporcional (12–18 pt)
             try:
@@ -4995,6 +5002,12 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
             pw = float(p.mediabox.width)
             ph = float(p.mediabox.height)
             if i >= start_after and (not cada_dos or ((i - start_after) % 2 == 0)):
+                try:
+                    if "indice" in (p.extract_text() or "").lower():
+                        w.add_page(p)
+                        continue
+                except Exception:
+                    pass
                 tmp = Path(tempfile.mkstemp(suffix=".foja.pdf")[1])
                 c = canvas.Canvas(str(tmp), pagesize=(pw, ph))
                 sz = max(12, min(18, ph * 0.018))
