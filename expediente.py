@@ -615,21 +615,22 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             pw, ph = first_rect.width, first_rect.height
 
             # Mostrar el índice desde la operación más antigua a la más reciente
-            # (los bloques ya vienen ordenados cronológicamente)
-            entries = items_info[1:]
+            # (ordenado por la página de inicio de cada bloque en forma descendente)
+            entries = sorted(items_info[1:], key=lambda x: x[1], reverse=True)
             fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
-            y_start = ph - margin - 28
+            title_y = margin + 10
+            y_start = title_y + 22
 
             def _calc_pages(n_items: int) -> int:
                 y = y_start
                 pages = 1
                 for _ in range(n_items):
-                    if y < margin + 24:
+                    if y > ph - margin - 24:
                         pages += 1
                         y = y_start
-                    y -= fs + 8
+                    y += fs + 8
                 return pages
 
             idx_page_count = _calc_pages(len(entries))
@@ -649,22 +650,22 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             page_idx = 0
             idx_page = index_pages[page_idx]
             try:
-                idx_page.insert_text((x_left, y_start + 10), index_title, fontsize=16)
+                idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
             except Exception:
                 pass
-            y = y_start - 22
+            y = y_start
 
             for title, start_page in entries:
-                if y < margin + 24:
+                if y > ph - margin - 24:
                     page_idx += 1
                     idx_page = index_pages[page_idx]
                     try:
                         idx_page.insert_text(
-                            (x_left, y_start + 10), index_title + " (cont.)", fontsize=16
+                            (x_left, title_y), index_title + " (cont.)", fontsize=16
                         )
                     except Exception:
                         pass
-                    y = y_start - 22
+                    y = y_start
                 t = str(title)[:120]
                 idx_page.insert_text((x_left, y), t, fontsize=fs)
                 # calcular ancho del titulo
@@ -703,7 +704,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         )
                     except Exception:
                         pass
-                y -= fs + 8
+                y += fs + 8
         except Exception as e:
             try:
                 logging.info(f"[INDICE] error: {e}")
