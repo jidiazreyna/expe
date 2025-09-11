@@ -697,7 +697,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
                 try:
                     idx_page.add_link(
-                        pno=target_page, rect=link_rect, dest=fitz.Point(0, 0)
+                        rect=link_rect, page=target_page, dest=fitz.Point(0, 0)
                     )
                 except Exception:
                     try:
