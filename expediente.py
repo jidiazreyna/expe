@@ -694,13 +694,21 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         if n > 2:
                             idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
-                link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs * 0.4)
+                link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
                 try:
-                    idx_page.add_link(pno=target_page, rect=link_rect, zoom=0)
+                    idx_page.add_link(
+                        pno=target_page, rect=link_rect, dest=fitz.Point(0, 0)
+                    )
                 except Exception:
                     try:
                         idx_page.insert_link(
-                            {"kind": fitz.LINK_GOTO, "page": target_page, "rect": link_rect}
+                            {
+                                "kind": fitz.LINK_GOTO,
+                                "page": target_page,
+                                "rect": link_rect,
+                                "to": fitz.Point(0, 0),
+                                "zoom": 0,
+                            }
                         )
                     except Exception:
                         pass
