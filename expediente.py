@@ -661,7 +661,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 return pages
 
             idx_page_count = _calc_pages(len(entries))
-            index_pages = [dst.new_page(pno=1 + i, width=pw, height=ph) for i in range(idx_page_count)]
+            index_pages = []
+            for i in range(idx_page_count):
+                pg = dst.new_page(pno=1 + i, width=pw, height=ph)
+                if isinstance(pg, int):
+                    pg = dst[pg]
+                index_pages.append(pg)
             try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
             except Exception: pass
 
@@ -780,7 +785,7 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
     Reinyecta anotaciones clickeables en las páginas de índice tras OCR/fojas.
     items: [{'start':1,'target':7,'y':70,'title':'...'}, ...]
     """
-    import fitz, math
+    import fitz, math, os, time
     try:
         doc = fitz.open(str(pdf_path))
 
@@ -815,7 +820,11 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 tmp = pdf_path.with_suffix(".tmp.pdf")
                 doc.save(str(tmp), deflate=True)
                 doc.close()
-                tmp.replace(pdf_path)
+                try:
+                    os.replace(str(tmp), str(pdf_path))
+                except PermissionError:
+                    time.sleep(0.5)
+                    os.replace(str(tmp), str(pdf_path))
             else:
                 doc.close()
                 raise
@@ -5321,6 +5330,8 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     return
 
                 timeline[(fecha or "__NOFECHA__")].append((pth, hdr, toc_title))
+                if fecha and fecha not in orden_fechas:
+                    orden_fechas.append(fecha)
 
             # 3) Abrir Libro y listar operaciones VISIBLES (sin forzar)
             etapa("Abriendo 'Expediente como Libro'")
