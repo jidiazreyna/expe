@@ -644,129 +644,134 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
             entries = sorted(items_info[1:], key=lambda x: x[1])  # salteo carátula
-            fs = 12
-            x_left = margin + 6
-            x_right = pw - margin - 12
-            title_y = margin + 10
-            y_start = title_y + 22
+            if entries:
+                fs = 12
+                x_left = margin + 6
+                x_right = pw - margin - 12
+                title_y = margin + 10
+                y_start = title_y + 22
 
-            def _calc_pages(n_items: int) -> int:
-                y = y_start
-                pages = 1
-                for _ in range(n_items):
-                    if y > ph - margin - 24:
-                        pages += 1
-                        y = y_start
-                    y += fs + 8
-                return pages
-
-            idx_page_count = _calc_pages(len(entries))
-            index_pages = []
-            for i in range(idx_page_count):
-                pg = dst.new_page(pno=1 + i, width=pw, height=ph)
-                if isinstance(pg, int):
-                    pg = dst[pg]
-                index_pages.append(pg)
-            try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
-            except Exception: pass
-
-            def _foja_for_page(p: int):
-                # p es 0-based del PDF final
-                skip = 1 + idx_page_count  # carátula + índice
-                if p < skip:
-                    return None
-                return 1 + ((p - skip) // 2)
-
-            use_foja_numbers = _env_true("FOJAS", "1")
-
-            page_idx = 0
-            idx_page = index_pages[page_idx]
-            try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-            except Exception: pass
-            y = y_start
-            toc_outline = []
-
-            for title, start_page in entries:
-                if y > ph - margin - 24:
-                    page_idx += 1
-                    idx_page = index_pages[page_idx]
-                    try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                    except Exception: pass
+                def _calc_pages(n_items: int) -> int:
+                    if n_items <= 0:
+                        return 0
                     y = y_start
+                    pages = 1
+                    for _ in range(n_items):
+                        if y > ph - margin - 24:
+                            pages += 1
+                            y = y_start
+                        y += fs + 8
+                    return pages
 
-                t = str(title)[:120]
-                idx_page.insert_text((x_left, y), t, fontsize=fs)
-
-                # ancho título (punteado)
-                try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
-                except Exception: tw_title = fs * max(1, len(t)) * 0.6
-
-                target_page = start_page + idx_page_count  # 0-based
-                toc_outline.append([1, t, target_page + 1])
-
-                try: logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
+                idx_page_count = _calc_pages(len(entries))
+                index_pages = []
+                for i in range(idx_page_count):
+                    pg = dst.new_page(pno=1 + i, width=pw, height=ph)
+                    if isinstance(pg, int):
+                        pg = dst[pg]
+                    index_pages.append(pg)
+                try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
                 except Exception: pass
 
-                fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
-                fj_txt = str(fj) if fj is not None else "-"
+                def _foja_for_page(p: int):
+                    # p es 0-based del PDF final
+                    skip = 1 + idx_page_count  # carátula + índice
+                    if p < skip:
+                        return None
+                    return 1 + ((p - skip) // 2)
 
-                try: tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
-                except Exception: tw = fs * max(1, len(fj_txt)) * 0.6
+                use_foja_numbers = _env_true("FOJAS", "1")
 
-                left_end = x_left + tw_title + 6
-                dot_area_right = x_right - tw - 6
-                if dot_area_right > left_end:
-                    try: tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
-                    except Exception: tw_dot = fs * 0.6
-                    if tw_dot > 0:
-                        n = int((dot_area_right - left_end) / tw_dot)
-                        if n > 2:
-                            idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
-
-                idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
-
-                # Rect clickable
-                link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                ok_link = _add_goto_link(idx_page, link_rect, target_page)
-                try: logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
+                page_idx = 0
+                idx_page = index_pages[page_idx]
+                try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
                 except Exception: pass
+                y = y_start
+                toc_outline = []
 
-                relink_items.append({
-                    "title": t,
-                    "start": (idx_page.number + 1),   # 1-based
-                    "target": (target_page + 1),      # 1-based
-                    "y": float(y)
-                })
-                y += fs + 8
+                for title, start_page in entries:
+                    if y > ph - margin - 24:
+                        page_idx += 1
+                        idx_page = index_pages[page_idx]
+                        try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
+                        except Exception: pass
+                        y = y_start
 
-            try:
-                if toc_outline:
-                    dst.set_toc(toc_outline)
-            except Exception:
-                pass
+                    t = str(title)[:120]
+                    idx_page.insert_text((x_left, y), t, fontsize=fs)
 
-            # Sidecar
-            try:
-                sidecar = destino.with_suffix(".toc.json")
-                import json
-                with open(sidecar, "w", encoding="utf-8") as f:
-                    json.dump({"items": relink_items, "idx_pages": idx_page_count},
-                              f, ensure_ascii=False, indent=2)
-                logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
-            except Exception as e:
-                logging.info(f"[INDICE] sidecar error: {e}")
+                    # ancho título (punteado)
+                    try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
+                    except Exception: tw_title = fs * max(1, len(t)) * 0.6
 
-            # Diagnóstico: contar links por página del índice
-            try:
-                for p in index_pages:
-                    ln, c = p.first_link, 0
-                    while ln:
-                        c += 1
-                        ln = ln.next
-                    logging.info(f"[INDICE] links en página {p.number+1}: {c}")
-            except Exception:
-                pass
+                    target_page = start_page + idx_page_count  # 0-based
+                    toc_outline.append([1, t, target_page + 1])
 
+                    try: logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
+                    except Exception: pass
+
+                    fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
+                    fj_txt = str(fj) if fj is not None else "-"
+
+                    try: tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
+                    except Exception: tw = fs * max(1, len(fj_txt)) * 0.6
+
+                    left_end = x_left + tw_title + 6
+                    dot_area_right = x_right - tw - 6
+                    if dot_area_right > left_end:
+                        try: tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
+                        except Exception: tw_dot = fs * 0.6
+                        if tw_dot > 0:
+                            n = int((dot_area_right - left_end) / tw_dot)
+                            if n > 2:
+                                idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
+
+                    idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
+
+                    # Rect clickable
+                    link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
+                    ok_link = _add_goto_link(idx_page, link_rect, target_page)
+                    try: logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
+                    except Exception: pass
+
+                    relink_items.append({
+                        "title": t,
+                        "start": (idx_page.number + 1),   # 1-based
+                        "target": (target_page + 1),      # 1-based
+                        "y": float(y)
+                    })
+                    y += fs + 8
+
+                try:
+                    if toc_outline:
+                        dst.set_toc(toc_outline)
+                except Exception:
+                    pass
+
+                # Sidecar
+                try:
+                    sidecar = destino.with_suffix(".toc.json")
+                    import json
+                    with open(sidecar, "w", encoding="utf-8") as f:
+                        json.dump({"items": relink_items, "idx_pages": idx_page_count},
+                                  f, ensure_ascii=False, indent=2)
+                    logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
+                except Exception as e:
+                    logging.info(f"[INDICE] sidecar error: {e}")
+
+                # Diagnóstico: contar links por página del índice
+                try:
+                    for p in index_pages:
+                        ln, c = p.first_link, 0
+                        while ln:
+                            c += 1
+                            ln = ln.next
+                        logging.info(f"[INDICE] links en página {p.number+1}: {c}")
+                except Exception:
+                    pass
+            else:
+                try: logging.info("[INDICE] sin entradas; no se genera índice")
+                except Exception: pass
         except Exception as e:
             try: logging.info(f"[INDICE] error: {e}")
             except Exception: pass
@@ -786,6 +791,8 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
     items: [{'start':1,'target':7,'y':70,'title':'...'}, ...]
     """
     import fitz, math, os, time
+    if not items:
+        return True
     try:
         doc = fitz.open(str(pdf_path))
 
