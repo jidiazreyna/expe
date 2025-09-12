@@ -698,7 +698,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         y = y_start
 
                     t = str(title)[:120]
-                    idx_page.insert_text((x_left, y), t, fontsize=fs)
+                    try:
+                        idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
+                    except Exception as e:
+                        try: logging.info(f"[INDICE] insert_text error: {e}")
+                        except Exception: pass
+                        continue
 
                     # ancho título (punteado)
                     try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
@@ -724,9 +729,15 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         if tw_dot > 0:
                             n = int((dot_area_right - left_end) / tw_dot)
                             if n > 2:
-                                idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
+                                try:
+                                    idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
+                                except Exception:
+                                    pass
 
-                    idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
+                    try:
+                        idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
+                    except Exception:
+                        pass
 
                     # Rect clickable
                     link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
