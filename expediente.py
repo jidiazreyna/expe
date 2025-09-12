@@ -811,13 +811,16 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
         try:
             doc.save(str(pdf_path), incremental=True, deflate=True)
         except Exception as err:
-            if getattr(err, "code", None) == 4:
+            if "code=4" in str(err):
                 tmp = pdf_path.with_suffix(".tmp.pdf")
                 doc.save(str(tmp), deflate=True)
+                doc.close()
                 tmp.replace(pdf_path)
             else:
+                doc.close()
                 raise
-        doc.close()
+        else:
+            doc.close()
         return True
     except Exception as e:
         logging.info(f"[INDICE/LINK:ERR] {e}")
