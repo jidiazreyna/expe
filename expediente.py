@@ -555,32 +555,60 @@ except Exception:
             except Exception:
                 pass
 
-
-
 def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDICE"):
+    """
+    Fusiona bloques PDF, inserta un índice clickable detrás de la carátula y devuelve
+    (idx_page_count, relink_items) donde:
+      - idx_page_count: cantidad de páginas del índice insertadas
+      - relink_items  : [{'title', 'start', 'target', 'y'}] para re-inyectar links post-OCR
+    También escribe <destino>.toc.json con ese mapeo.
+    """
     try:
         import fitz  # PyMuPDF
     except Exception:
-        # Sin PyMuPDF: fusion simple sin indice
+        # Sin PyMuPDF: fusión simple sin índice
         fusionar_bloques_inline(bloques, destino)
-        return 0
+        try:
+            logging.info(f"[MERGE:DONE/NO_FITZ] {destino.name}")
+        except Exception:
+            pass
+        return 0, []
+
+    def _add_goto_link(pg, rect, target_page_zero_based) -> bool:
+        """Crea un link interno robusto, compatible con varias versiones de PyMuPDF."""
+        try:
+            pg.insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": int(target_page_zero_based)})
+            return True
+        except Exception:
+            pass
+        try:
+            pg.insert_link({"kind": fitz.LINK_GOTO, "rect": rect, "page": int(target_page_zero_based)})
+            return True
+        except Exception:
+            pass
+        try:
+            pg.add_link(rect=rect, page=int(target_page_zero_based))
+            return True
+        except Exception:
+            return False
 
     dst = fitz.open()
     margin = 18
-    items_info = []  # (title, start_page)
+    items_info = []  # (title_for_toc, start_page_zero_based)
+
+    # --- Inserción de bloques ---
     for item in bloques:
         if isinstance(item, (list, tuple)) and len(item) >= 3:
             pdf_path, header_text, toc_title = item[0], item[1], item[2]
         else:
             pdf_path, header_text = item[0], item[1]
             toc_title = None
+
         try:
             src = fitz.open(str(pdf_path))
         except Exception as e:
-            try:
-                logging.info(f"[MERGE:SKIP] {Path(pdf_path).name} - {e}")
-            except Exception:
-                pass
+            try: logging.info(f"[MERGE:SKIP] {Path(pdf_path).name} - {e}")
+            except Exception: pass
             continue
 
         start = dst.page_count
@@ -588,43 +616,34 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         end = dst.page_count
         src.close()
 
-        # Titulo para el indice
-        title_for_toc = (
-            str(toc_title).strip()
-            if toc_title
-            else (str(header_text).strip() if header_text else Path(pdf_path).name)
-        )
+        title_for_toc = (str(toc_title).strip() if toc_title
+                         else (str(header_text).strip() if header_text else Path(pdf_path).name))
         items_info.append((title_for_toc, start))
 
+        # Header opcional
         if header_text:
             title = str(header_text)[:180]
             for i in range(start, end):
                 page = dst[i]
                 rect = page.rect
-                page.draw_rect(
-                    fitz.Rect(margin, margin, rect.width - margin, rect.height - margin),
-                    width=1,
-                )
                 try:
-                    page.insert_text(
-                        (margin + 10, rect.height - margin + 2),
-                        title,
-                        fontname="helv",
-                        fontsize=12,
-                    )
+                    page.draw_rect(fitz.Rect(margin, margin, rect.width - margin, rect.height - margin), width=1)
+                except Exception:
+                    pass
+                try:
+                    page.insert_text((margin + 10, rect.height - margin + 2), title, fontname="helv", fontsize=12)
                 except Exception:
                     page.insert_text((margin + 10, rect.height - margin + 2), title, fontsize=12)
 
+    # --- Índice ---
     idx_page_count = 0
-    # Insertar indice interactivo despues de la caratula
+    relink_items = []
+
     if dst.page_count > 0 and len(items_info) > 1:
         try:
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
-
-            # Mostrar el índice desde la operación más antigua a la más reciente
-            # (ordenado por la página de inicio de cada bloque en forma ascendente)
-            entries = sorted(items_info[1:], key=lambda x: x[1])
+            entries = sorted(items_info[1:], key=lambda x: x[1])  # salteo carátula
             fs = 12
             x_left = margin + 6
             x_right = pw - margin - 12
@@ -642,17 +661,13 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 return pages
 
             idx_page_count = _calc_pages(len(entries))
-
-            index_pages = [
-                dst.new_page(pno=1 + i, width=pw, height=ph) for i in range(idx_page_count)
-            ]
-            try:
-                logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
-            except Exception:
-                pass
+            index_pages = [dst.new_page(pno=1 + i, width=pw, height=ph) for i in range(idx_page_count)]
+            try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
+            except Exception: pass
 
             def _foja_for_page(p: int):
-                skip = 1 + idx_page_count
+                # p es 0-based del PDF final
+                skip = 1 + idx_page_count  # carátula + índice
                 if p < skip:
                     return None
                 return 1 + ((p - skip) // 2)
@@ -661,107 +676,162 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
             page_idx = 0
             idx_page = index_pages[page_idx]
-            try:
-                idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-            except Exception:
-                pass
+            try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
+            except Exception: pass
             y = y_start
-            toc = []
+            toc_outline = []
 
             for title, start_page in entries:
                 if y > ph - margin - 24:
                     page_idx += 1
                     idx_page = index_pages[page_idx]
-                    try:
-                        idx_page.insert_text(
-                            (x_left, title_y), index_title + " (cont.)", fontsize=16
-                        )
-                    except Exception:
-                        pass
+                    try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
+                    except Exception: pass
                     y = y_start
+
                 t = str(title)[:120]
                 idx_page.insert_text((x_left, y), t, fontsize=fs)
-                # calcular ancho del titulo
-                try:
-                    tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
-                except Exception:
-                    tw_title = fs * max(1, len(t)) * 0.6
-                target_page = start_page + idx_page_count
-                toc.append([1, t, target_page + 1])
-                try:
-                    logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
-                except Exception:
-                    pass
+
+                # ancho título (punteado)
+                try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
+                except Exception: tw_title = fs * max(1, len(t)) * 0.6
+
+                target_page = start_page + idx_page_count  # 0-based
+                toc_outline.append([1, t, target_page + 1])
+
+                try: logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
+                except Exception: pass
+
                 fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
                 fj_txt = str(fj) if fj is not None else "-"
-                try:
-                    tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
-                except Exception:
-                    tw = fs * max(1, len(fj_txt)) * 0.6
+
+                try: tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
+                except Exception: tw = fs * max(1, len(fj_txt)) * 0.6
+
                 left_end = x_left + tw_title + 6
                 dot_area_right = x_right - tw - 6
                 if dot_area_right > left_end:
-                    try:
-                        tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
-                    except Exception:
-                        tw_dot = fs * 0.6
+                    try: tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
+                    except Exception: tw_dot = fs * 0.6
                     if tw_dot > 0:
                         n = int((dot_area_right - left_end) / tw_dot)
                         if n > 2:
                             idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
+
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
+
+                # Rect clickable
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                annot = None
-                # Enlace clickeable: intentar rutas segun version de PyMuPDF
-                try:
-                    # PyMuPDF >= 1.21
-                    annot = idx_page.add_link(link_rect, page=target_page)
-                except Exception as e1:
-                    try:
-                        annot = idx_page.insert_link({
-                            "kind": fitz.LINK_GOTO,
-                            "from": link_rect,
-                            "page": target_page,
-                        })
-                    except Exception as e2:
-                        try:
-                            annot = idx_page.insert_link({
-                                "kind": fitz.LINK_GOTO,
-                                "rect": link_rect,
-                                "page": target_page,
-                            })
-                        except Exception as e3:
-                            try:
-                                logging.info(f"[INDICE] link_fail {t[:50]} - {e3}")
-                            except Exception:
-                                pass
-                if annot:
-                    try:
-                        annot.set_border(width=0)
-                        annot.update()
-                        logging.info(f"[INDICE] link_ok {t[:50]} -> p{target_page}")
-                    except Exception:
-                        pass
+                ok_link = _add_goto_link(idx_page, link_rect, target_page)
+                try: logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
+                except Exception: pass
+
+                relink_items.append({
+                    "title": t,
+                    "start": (idx_page.number + 1),   # 1-based
+                    "target": (target_page + 1),      # 1-based
+                    "y": float(y)
+                })
                 y += fs + 8
 
             try:
-                if toc:
-                    dst.set_toc(toc)
-            except Exception:
-                pass
-        except Exception as e:
-            try:
-                logging.info(f"[INDICE] error: {e}")
+                if toc_outline:
+                    dst.set_toc(toc_outline)
             except Exception:
                 pass
 
-    dst.save(str(destino), deflate=True, garbage=3)
+            # Sidecar
+            try:
+                sidecar = destino.with_suffix(".toc.json")
+                import json
+                with open(sidecar, "w", encoding="utf-8") as f:
+                    json.dump({"items": relink_items, "idx_pages": idx_page_count},
+                              f, ensure_ascii=False, indent=2)
+                logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
+            except Exception as e:
+                logging.info(f"[INDICE] sidecar error: {e}")
+
+            # Diagnóstico: contar links por página del índice
+            try:
+                for p in index_pages:
+                    ln, c = p.first_link, 0
+                    while ln:
+                        c += 1
+                        ln = ln.next
+                    logging.info(f"[INDICE] links en página {p.number+1}: {c}")
+            except Exception:
+                pass
+
+        except Exception as e:
+            try: logging.info(f"[INDICE] error: {e}")
+            except Exception: pass
+
+    # --- Guardado ---
+    dst.save(str(destino), deflate=True, garbage=3)  # preserva anotaciones
     dst.close()
+    try: logging.info(f"[MERGE:DONE/INDICE] {destino.name}")
+    except Exception: pass
+    return idx_page_count, relink_items
+
+
+def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
+                            left=36, right=36, line_h=20, pad_top=3, pad_bottom=3):
+    """
+    Reinyecta anotaciones clickeables en las páginas de índice tras OCR/fojas.
+    items: [{'start':1,'target':7,'y':70,'title':'...'}, ...]
+    """
+    import fitz, math
     try:
-        logging.info(f"[MERGE:DONE/INDICE] {destino.name}")
-    except Exception:
-        pass
-    return idx_page_count
+        doc = fitz.open(str(pdf_path))
+
+        # 1) limpiar links existentes en páginas de índice
+        for it in items:
+            p = int(it.get("start", 1)) - 1
+            if 0 <= p < doc.page_count:
+                pg = doc[p]
+                ln = pg.first_link
+                while ln:
+                    nxt = ln.next
+                    pg.delete_link(ln)
+                    ln = nxt
+
+        # 2) reinsertar
+        for it in items:
+            p_from = int(it.get("start", 1)) - 1
+            p_to   = int(it.get("target", 1)) - 1
+            y      = float(it.get("y", 0.0))
+            if not (0 <= p_from < doc.page_count and 0 <= p_to < doc.page_count):
+                continue
+            pg = doc[p_from]
+            W, H = pg.rect.width, pg.rect.height
+            rect = fitz.Rect(left, max(0, y - line_h + pad_top),
+                             max(left + 50, W - right),
+                             min(H, y + pad_bottom))
+            pg.insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": p_to, "zoom": 0})
+        doc.save(str(pdf_path), incremental=True, deflate=True)
+        doc.close()
+        return True
+    except Exception as e:
+        logging.info(f"[INDICE/LINK:ERR] {e}")
+        return False
+
+
+def _log_links_en_pagina(pdf_path: Path, pagina_1b: int, etiqueta: str):
+    import fitz
+    try:
+        doc = fitz.open(str(pdf_path))
+        p = pagina_1b - 1
+        if 0 <= p < doc.page_count:
+            ln = doc[p].first_link
+            n = 0
+            while ln:
+                n += 1
+                ln = ln.next
+            logging.info(f"[{etiqueta}] links en página {pagina_1b}: {n}")
+        doc.close()
+    except Exception as e:
+        logging.info(f"[{etiqueta}] no se pudo contar links: {e}")
+
 
 def _listar_ops_ids_radiografia(sac, wait_ms: int | None = None, scan_frames: bool = True) -> list[str]:
     """
@@ -5542,7 +5612,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
 
             # 3) Elementos sin fecha ? al final
             bloques_final.extend(timeline.get("__NOFECHA__", []))
-
             # 9) Fusión final
             # Reordenar bloques por fechas con fallback si falta orden desde Radiografia
             try:
@@ -5564,12 +5633,24 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 pass
 
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
-            idx_pages = fusionar_bloques_con_indice(bloques_final, out, index_title="INDICE")
+            idx_pages, idx_map = fusionar_bloques_con_indice(bloques_final, out, index_title="INDICE")
+
+            # Diagnóstico inicial: links presentes justo tras fusionar
+            try:
+                _log_links_en_pagina(out, 1, "INDICE/ANTES_POST")
+            except Exception:
+                pass
 
             # Intentar aplicar OCR al PDF final
             ocr_out = _maybe_ocr(out)
             if ocr_out != out:
                 shutil.move(ocr_out, out)
+
+            # Diagnóstico después del OCR “ligero”
+            try:
+                _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR")
+            except Exception:
+                pass
 
             if _env_true("OCR_FINAL_FORCE"):
                 try:
@@ -5592,6 +5673,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 except Exception:
                     logging.exception("[OCR] Falló OCR final")
 
+                # Diagnóstico después del OCR forzado
+                try:
+                    _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR_FORCE")
+                except Exception:
+                    pass
+
             # === FOJAS (numeración de hojas) ===
             try:
                 # Deja la carátula y el índice sin número; numera desde la siguiente,
@@ -5605,6 +5692,25 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 logging.info("[FOJAS] Numeración de fojas aplicada")
             except Exception as e:
                 logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
+
+            # Diagnóstico tras fojas (antes de reinyectar)
+            try:
+                _log_links_en_pagina(out, 1, "INDICE/ANTES_RELINK")
+            except Exception:
+                pass
+
+            # Reinyectar links (por si OCR/fojas los borraron)
+            try:
+                ok = _relink_indice_con_fitz(out, idx_map)
+                logging.info(f"[INDICE/LINK] reinyectado={ok} items={len(idx_map)}")
+            except Exception as e:
+                logging.info(f"[INDICE/LINK:ERR] {e}")
+
+            # Diagnóstico final
+            try:
+                _log_links_en_pagina(out, 1, "INDICE/FINAL")
+            except Exception:
+                pass
 
             _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques_final)})")
             logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques_final)}")
@@ -5622,6 +5728,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 pass
             if not KEEP_WORK:
                 shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 
 
