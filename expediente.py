@@ -815,7 +815,11 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 tmp = pdf_path.with_suffix(".tmp.pdf")
                 doc.save(str(tmp), deflate=True)
                 doc.close()
-                tmp.replace(pdf_path)
+                try:
+                    tmp.replace(pdf_path)
+                except PermissionError:
+                    shutil.copyfile(tmp, pdf_path)
+                    tmp.unlink()
             else:
                 doc.close()
                 raise
