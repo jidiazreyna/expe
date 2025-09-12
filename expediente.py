@@ -808,7 +808,15 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                              max(left + 50, W - right),
                              min(H, y + pad_bottom))
             pg.insert_link({"kind": fitz.LINK_GOTO, "from": rect, "page": p_to, "zoom": 0})
-        doc.save(str(pdf_path), incremental=True, deflate=True)
+        try:
+            doc.save(str(pdf_path), incremental=True, deflate=True)
+        except Exception as err:
+            if getattr(err, "code", None) == 4:
+                tmp = pdf_path.with_suffix(".tmp.pdf")
+                doc.save(str(tmp), deflate=True)
+                tmp.replace(pdf_path)
+            else:
+                raise
         doc.close()
         return True
     except Exception as e:
