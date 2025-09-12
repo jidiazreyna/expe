@@ -711,22 +711,35 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                             idx_page.insert_text((left_end, y), "." * n, fontsize=fs)
                 idx_page.insert_text((x_right - tw, y), fj_txt, fontsize=fs)
                 link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                # Enlace clickeable (ruta más compatible con PyMuPDF 1.26.x)
+                annot = None
+                # Enlace clickeable: intentar rutas segun version de PyMuPDF
                 try:
-                    idx_page.insert_link({
-                        "kind": fitz.LINK_GOTO,
-                        "from": link_rect,   # rectángulo clickeable
-                        "page": target_page,  # página destino (0-based)
-                        "to": fitz.Point(0, 0),
-                    })
-                except Exception:
+                    # PyMuPDF >= 1.21
+                    annot = idx_page.add_link(link_rect, page=target_page)
+                except Exception as e1:
                     try:
-                        idx_page.insert_link({
+                        annot = idx_page.insert_link({
                             "kind": fitz.LINK_GOTO,
-                            "rect": link_rect,
+                            "from": link_rect,
                             "page": target_page,
-                            "to": fitz.Point(0, 0),
                         })
+                    except Exception as e2:
+                        try:
+                            annot = idx_page.insert_link({
+                                "kind": fitz.LINK_GOTO,
+                                "rect": link_rect,
+                                "page": target_page,
+                            })
+                        except Exception as e3:
+                            try:
+                                logging.info(f"[INDICE] link_fail {t[:50]} - {e3}")
+                            except Exception:
+                                pass
+                if annot:
+                    try:
+                        annot.set_border(width=0)
+                        annot.update()
+                        logging.info(f"[INDICE] link_ok {t[:50]} -> p{target_page}")
                     except Exception:
                         pass
                 y += fs + 8
