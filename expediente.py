@@ -5265,519 +5265,519 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                         viewport={"width": 1366, "height": 900},
                     )
 
-        try:
-            etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
-            # 1) Login ? Radiografía
-            sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
-            logging.info(f"[SAC] Abierto SAC / Radiografía: url={sac.url}")
-
-            # 2) Buscar expediente
-            etapa(f"Entrando a Radiografía y buscando expediente N° {nro_exp}")
-            _fill_radiografia_y_buscar(sac, nro_exp)
-            logging.info(f"[RADIO] Buscado expediente N° {nro_exp}")
-
-            if "SacInterior/Login.aspx" in sac.url:
-                messagebox.showerror("Error de sesión", "El SAC pidió re-login. Probá nuevamente.")
-                return
-
-            if "PortalWeb/LogIn/Login.aspx" in (sac.url or ""):
-                _login_intranet(sac, intra_user, intra_pass)
-                sac = _ir_a_radiografia(sac)
+            try:
+                etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
+                # 1) Login ? Radiografía
+                sac = abrir_sac(context, tele_user, tele_pass, intra_user, intra_pass)
+                logging.info(f"[SAC] Abierto SAC / Radiografía: url={sac.url}")
+    
+                # 2) Buscar expediente
+                etapa(f"Entrando a Radiografía y buscando expediente N° {nro_exp}")
                 _fill_radiografia_y_buscar(sac, nro_exp)
-
-            # >>> GATE DESDE RADIOGRAFÍA <<<
-            CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
-            etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
-
-            # Esperar a que cargue la vista (carátula + grillas)
-            _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "150")))
-            logging.info("[RADIO] Vista de Radiografía cargada (carátula/operaciones/adjuntos visibles)")
-
-            # Listar operaciones rápido (con frames)
-            op_ids_rad = _listar_ops_ids_radiografia(
-                sac,
-                wait_ms=int(os.getenv("RADIO_OPS_WAIT_MS", "150")),
-                scan_frames=True,
-            )
-
-            # Verificación de acceso:
-            acceso_ok = False
-            if op_ids_rad:
-                ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
-                # 1) Si alguna operación probada está denegada ? abortar
-                if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
-                    logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
+                logging.info(f"[RADIO] Buscado expediente N° {nro_exp}")
+    
+                if "SacInterior/Login.aspx" in sac.url:
+                    messagebox.showerror("Error de sesión", "El SAC pidió re-login. Probá nuevamente.")
+                    return
+    
+                if "PortalWeb/LogIn/Login.aspx" in (sac.url or ""):
+                    _login_intranet(sac, intra_user, intra_pass)
+                    sac = _ir_a_radiografia(sac)
+                    _fill_radiografia_y_buscar(sac, nro_exp)
+    
+                # >>> GATE DESDE RADIOGRAFÍA <<<
+                CHECK_ALL = _env_true("STRICT_CHECK_ALL_OPS", "0")
+                etapa("Esperando carga de Radiografía y verificando acceso a operaciones")
+    
+                # Esperar a que cargue la vista (carátula + grillas)
+                _esperar_radiografia_listo(sac, timeout=int(os.getenv("RADIO_TIMEOUT_MS", "150")))
+                logging.info("[RADIO] Vista de Radiografía cargada (carátula/operaciones/adjuntos visibles)")
+    
+                # Listar operaciones rápido (con frames)
+                op_ids_rad = _listar_ops_ids_radiografia(
+                    sac,
+                    wait_ms=int(os.getenv("RADIO_OPS_WAIT_MS", "150")),
+                    scan_frames=True,
+                )
+    
+                # Verificación de acceso:
+                acceso_ok = False
+                if op_ids_rad:
+                    ids_a_probar = op_ids_rad if CHECK_ALL else op_ids_rad[:1]
+                    # 1) Si alguna operación probada está denegada ? abortar
+                    if any(_op_denegada_en_radiografia(sac, _id) for _id in ids_a_probar):
+                        logging.info("[SEC] Radiografía mostró 'sin permisos' en al menos una operación. Abortando.")
+                        messagebox.showwarning(
+                            "Sin acceso",
+                            "No tenés permisos para visualizar el contenido de este expediente "
+                            "(al menos una operación está bloqueada). No se descargará nada.",
+                        )
+                        return
+                    # 2) Al menos una visible con contenido
+                    acceso_ok = any(_op_visible_con_contenido_en_radiografia(sac, _id) for _id in ids_a_probar)
+                else:
+                    acceso_ok = _puedo_abrir_alguna_operacion(sac)
+    
+                if not acceso_ok:
+                    logging.info("[SEC] No hay acceso real al contenido de las operaciones (bloqueando descarga).")
                     messagebox.showwarning(
                         "Sin acceso",
-                        "No tenés permisos para visualizar el contenido de este expediente "
-                        "(al menos una operación está bloqueada). No se descargará nada.",
+                        "No tenés permisos para visualizar el contenido del expediente (operaciones bloqueadas). "
+                        "No se descargará nada.",
                     )
                     return
-                # 2) Al menos una visible con contenido
-                acceso_ok = any(_op_visible_con_contenido_en_radiografia(sac, _id) for _id in ids_a_probar)
-            else:
-                acceso_ok = _puedo_abrir_alguna_operacion(sac)
-
-            if not acceso_ok:
-                logging.info("[SEC] No hay acceso real al contenido de las operaciones (bloqueando descarga).")
-                messagebox.showwarning(
-                    "Sin acceso",
-                    "No tenés permisos para visualizar el contenido del expediente (operaciones bloqueadas). "
-                    "No se descargará nada.",
-                )
-                return
-            # <<< FIN GATE DESDE RADIOGRAFÍA >>>
-
-            # === 3.a) NUEVO: fechas por operación + timeline ===
-            op_fecha_map, orden_fechas = _mapear_fechas_operaciones_radiografia(sac)
-            from collections import defaultdict
-            timeline = defaultdict(list)   # { 'dd/mm/aaaa' -> [(Path, header), ...] }
-            ya_agregados: set[tuple[str, int]] = set()
-            caratula_block: tuple[Path, str | None] | None = None
-
-            def _push_pdf(pth: Path, hdr: str | None, fecha: str | None, toc_title: str | None = None):
-                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
-                    return
-                try:
-                    key = (pth.name, pth.stat().st_size)
-                except Exception:
-                    key = (pth.name, 0)
-                if key in ya_agregados:
-                    return
-                ya_agregados.add(key)
-
-                # Limpieza de páginas en blanco (best-effort)
-                try:
-                    pth = _pdf_sin_blancos(pth)
-                except Exception:
-                    pass
-                if not pth or not Path(pth).exists():
-                    return
-
-                timeline[(fecha or "__NOFECHA__")].append((pth, hdr, toc_title))
-                if fecha and fecha not in orden_fechas:
-                    orden_fechas.append(fecha)
-
-            # 3) Abrir Libro y listar operaciones VISIBLES (sin forzar)
-            etapa("Abriendo 'Expediente como Libro'")
-            libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
-            if _es_login_intranet(libro):
-                _login_intranet(libro, intra_user, intra_pass)
-            if "ExpedienteLibro.aspx" not in (libro.url or ""):
-                libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
-
-            etapa("Cargando índice del Libro")
-            ops = _expandir_y_cargar_todo_el_libro(libro)
-            # Fallback de fechas por operacion desde el Indice del Libro
-            try:
-                import re as _re
-                op_fecha_map_alt: dict[str, str] = {}
-                orden_fechas_alt: list[str] = []
-                for it in ops:
-                    try:
-                        t = _norm_ws(it.get("titulo") or "")
-                    except Exception:
-                        t = ""
-                    m = _re.search(r"\b\d{2}/\d{2}/\d{4}\b", t)
-                    if m:
-                        d = m.group(0)
-                        op_fecha_map_alt[it["id"]] = d
-                        if not orden_fechas_alt or orden_fechas_alt[-1] != d:
-                            orden_fechas_alt.append(d)
-                for k, v in op_fecha_map_alt.items():
-                    if k not in op_fecha_map:
-                        op_fecha_map[k] = v
-                if (not orden_fechas) and orden_fechas_alt:
-                    orden_fechas = orden_fechas_alt
-            except Exception:
-                pass
-            logging.info(f"[LIBRO] Índice cargado · operaciones visibles={len(ops)}")
-            if not ops:
-                logging.info("[SEC] La UI no muestra operaciones en el Índice. Se continúa SIN operaciones.")
-                ops = []
-            logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el índice.")
-
-            # 4) Preparar contexto headless reutilizable para HTML->PDF (carátula + operaciones)
-            hbrowser = hctx = hp = None
-            try:
-                state_print = temp_dir / "state_print.json"
-                try:
-                    context.storage_state(path=str(state_print))
-                except Exception:
-                    pass
-                hbrowser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
-                hctx = hbrowser.new_context(
-                    storage_state=str(state_print), viewport={"width": 900, "height": 1200}
-                )
-                hp = hctx.new_page()
-                try:
-                    hp.emulate_media(media="print")
-                except Exception:
-                    pass
-            except Exception:
-                hbrowser = hctx = hp = None
-
-            # 4) Carátula (guardada aparte para que quede primera)
-            etapa("Renderizando carátula del expediente")
-            try:
-                caratula_pdf = _render_caratula_a_pdf(libro, context, p, temp_dir, hctx=hctx, hp=hp)
-                if caratula_pdf and caratula_pdf.exists():
-                    _mf(f"CARATULA · {caratula_pdf.name}")
-                    caratula_block = (caratula_pdf, None)
-                    logging.info("[CARATULA] capturada")
-                else:
-                    logging.info("[CARATULA] no se pudo capturar (se continúa)")
-            except Exception as e:
-                logging.info(f"[CARATULA:ERR] {e}")
-
-            # 5) Adjuntos del GRID (mapeados por operación)
-            etapa("Descargando adjuntos desde Radiografía (grilla)")
-            try:
-                sac.bring_to_front()
-            except Exception:
-                pass
-            pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path, ...]}
-            logging.info(f"[ADJ/GRID] Mapeo adjuntos por operación: { {k: len(v) for k, v in pdfs_grid.items()} }")
-
-            # Helper: adjuntos de operación (Libro + Grid) — se depositan en el día de la operación
-            def _agregar_adjuntos_de_op(op_id: str, titulo: str, fecha_op: str | None):
-                pdfs_op: list[Path] = []
-                try:
-                    pdfs_op.extend(_descargar_adjuntos_de_operacion(libro, op_id, temp_dir))
-                except Exception:
-                    pass
-                pdfs_op.extend(pdfs_grid.get(op_id, []))
-                for ap in pdfs_op:
-                    pth = (
-                        ap
-                        if ap.suffix.lower() == ".pdf"
-                        else (_ensure_pdf_fast(ap) if "_ensure_pdf_fast" in globals() else _ensure_pdf(ap))
-                    )
+                # <<< FIN GATE DESDE RADIOGRAFÍA >>>
+    
+                # === 3.a) NUEVO: fechas por operación + timeline ===
+                op_fecha_map, orden_fechas = _mapear_fechas_operaciones_radiografia(sac)
+                from collections import defaultdict
+                timeline = defaultdict(list)   # { 'dd/mm/aaaa' -> [(Path, header), ...] }
+                ya_agregados: set[tuple[str, int]] = set()
+                caratula_block: tuple[Path, str | None] | None = None
+    
+                def _push_pdf(pth: Path, hdr: str | None, fecha: str | None, toc_title: str | None = None):
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
-                        continue
-                    _mf(f"ADJUNTO · {titulo} · {pth.name}")
-                    hdr = (f"ADJUNTO · {titulo}") if STAMP else None
-                    hdr = (f"ADJUNTO - {titulo}") if STAMP else None
-                    _push_pdf(pth, hdr, fecha=fecha_op, toc_title=f"ADJUNTO - {titulo}")
-
-            # 6) Operaciones (render por páginas sólo si están visibles)
-            op_pdfs_capturados = 0
-            etapa("Procesando operaciones visibles del Libro")
-            for o in ops:
-                op_id = o["id"]
-                op_tipo = o["tipo"]
-                titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
-                fecha_op = op_fecha_map.get(op_id, None)  # fecha desde la grilla
-                logging.info(
-                    f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}' · fecha='{fecha_op or '-'}'"
-                )
-
-                # Mostrar y chequear visibilidad real del contenedor de la operación
-                _mostrar_operacion(libro, op_id, op_tipo)
-                S = _libro_scope(libro)
-                cont = _buscar_contenedor_operacion(S, op_id)
-                if not cont:
-                    logging.info(f"[OP] {op_id}: contenedor no encontrado; se continúa con adjuntos.")
-                    _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
-                    continue
-
-                visible = False
-                try:
-                    if cont.count() and cont.is_visible():
-                        bb = cont.bounding_box()
-                        visible = bool(bb and bb.get("width", 0) > 40 and bb.get("height", 0) > 40)
-                except Exception:
-                    visible = False
-
-                if not visible:
-                    logging.info(
-                        f"[OP] {op_id}: contenedor no visible; se omite render de operación (se agregan adjuntos igual)."
-                    )
-                    _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
-                    continue
-
-                # Render HTML ? PDF
-                try:
-                    pdf_op = _render_operacion_a_pdf_paginas(libro, op_id, context, p, temp_dir, hctx=hctx, hp=hp)
-                except Exception as e:
-                    logging.info(f"[OP:ERR] {op_id}: {e}")
-                    pdf_op = None
-
-                if pdf_op and pdf_op.exists():
-                    _mf(f"OPERACION · {titulo} · {pdf_op.name}")
-                    _push_pdf(pdf_op, None, fecha=fecha_op, toc_title=f"OPERACION - {titulo}")
-                    op_pdfs_capturados += 1
-                    logging.info(f"[OP] {op_id}: agregado (renderer de páginas)")
-                else:
-                    logging.info(f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos).")
-
-                # Adjuntos de esta operación (con la misma fecha de la operación)
-                _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
-
-            # Cerrar contexto headless reutilizado
-            try:
-                if hp:
-                    hp.close()
-            except Exception:
-                pass
-            try:
-                if hctx:
-                    hctx.close()
-            except Exception:
-                pass
-            try:
-                if hbrowser:
-                    hbrowser.close()
-            except Exception:
-                pass
-
-            # 5b) Informes técnicos — DESPUÉS de operaciones ? quedan al final del día
-            etapa("Descargando informes técnicos")
-            try:
-                sac.bring_to_front()
-            except Exception:
-                pass
-            informes_tecnicos = _descargar_informes_tecnicos(sac, temp_dir)
-            logging.info(f"[INF] Informes técnicos descargados: {len(informes_tecnicos)}")
-            for it_path, it_fecha in informes_tecnicos:
-                pth = (
-                    it_path
-                    if it_path.suffix.lower() == ".pdf"
-                    else (_ensure_pdf_fast(it_path) if "_ensure_pdf_fast" in globals() else _ensure_pdf(it_path))
-                )
-                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
-                    continue
-                _mf(f"INF_TEC · {it_fecha} · {pth.name}")
-                hdr = (f"INFORME TÉCNICO · {it_fecha}") if STAMP else None
-                toc_it = f"INFORME TECNICO MPF - {it_fecha}" if it_fecha else "INFORME TECNICO MPF"
-                _push_pdf(pth, hdr, fecha=it_fecha, toc_title=toc_it)
-
-                # Extraer anexos embebidos (si existe la función)
-                try:
-                    anexos = _extraer_adjuntos_embebidos(pth, temp_dir) if '_extraer_adjuntos_embebidos' in globals() else []
-                except Exception:
-                    anexos = []
-                for an in anexos:
-                    an = Path(an)
-                    an_pdf = (
-                        an if an.suffix.lower() == ".pdf"
-                        else (_ensure_pdf_fast(an) if "_ensure_pdf_fast" in globals() else _ensure_pdf(an))
-                    )
-                    if not an_pdf or not Path(an_pdf).exists() or Path(an_pdf).suffix.lower() != ".pdf":
-                        continue
-                    _mf(f"INF_TEC/ANEXO · {it_fecha} · {Path(an_pdf).name}")
-                    hdr_an = (f"INFORME TÉCNICO – ANEXO · {it_fecha}") if STAMP else None
-                    hdr_an = (f"INFORME TECNICO - ANEXO - {it_fecha}") if STAMP else None
-                    toc_an = f"INFORME TECNICO MPF - ANEXO - {it_fecha}" if it_fecha else "INFORME TECNICO MPF - ANEXO"
-                    _push_pdf(Path(an_pdf), hdr_an, fecha=it_fecha, toc_title=toc_an)
-            if op_pdfs_capturados == 0:
-                logging.info("[FALLBACK] Ninguna operación pudo renderizarse; intento PDF del Libro.")
-                libro_pdf = _imprimir_libro_a_pdf(libro, context, temp_dir, p)
-                if not (libro_pdf and libro_pdf.exists() and libro_pdf.stat().st_size > 1024):
-                    html_snap = _guardar_libro_como_html(libro, temp_dir)
-                    if html_snap and html_snap.exists():
-                        libro_pdf = _convertir_html_a_pdf(html_snap, context, p, temp_dir)
-                if libro_pdf and libro_pdf.exists() and libro_pdf.stat().st_size > 1024:
+                        return
                     try:
-                        libro_pdf = _pdf_sin_blancos(libro_pdf)
+                        key = (pth.name, pth.stat().st_size)
+                    except Exception:
+                        key = (pth.name, 0)
+                    if key in ya_agregados:
+                        return
+                    ya_agregados.add(key)
+    
+                    # Limpieza de páginas en blanco (best-effort)
+                    try:
+                        pth = _pdf_sin_blancos(pth)
                     except Exception:
                         pass
-                    _mf(f"LIBRO · {libro_pdf.name}")
-                    _push_pdf(libro_pdf, None, fecha=None, toc_title="LIBRO")
-                else:
-                    logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
-
-            # 8) Adjuntos sin operación mapeada ? al final (sin fecha)
-            # 5c) Informes Registro Nacional de Reincidencia (RNR)
-            etapa("Descargando informes RNR")
-            try:
-                sac.bring_to_front()
-            except Exception:
-                pass
-            try:
-                informes_rnr = _descargar_informes_reincidencia(sac, temp_dir)
-            except Exception:
-                informes_rnr = []
-            logging.info(f"[RNR] Informes RNR descargados: {len(informes_rnr)}")
-            for rnr_path, rnr_fecha in informes_rnr:
-                pth = (
-                    rnr_path
-                    if rnr_path.suffix.lower() == ".pdf"
-                    else (_ensure_pdf_fast(rnr_path) if "_ensure_pdf_fast" in globals() else _ensure_pdf(rnr_path))
-                )
-                if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
-                    continue
-                _mf(f"RNR - {rnr_fecha or '-'} - {pth.name}")
-                hdr = (f"INFORME RNR - {rnr_fecha}") if STAMP and rnr_fecha else ("INFORME RNR" if STAMP else None)
-                _push_pdf(pth, hdr, fecha=(rnr_fecha or None), toc_title=("INFORME RNR - " + (rnr_fecha or "")))
-                logging.info(f"[MERGE] RNR - {pth.name} (fecha {rnr_fecha or '-'})")
-
-            adj_sin = pdfs_grid.get("__SIN_OP__", [])
-            if adj_sin:
-                logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
-                for pdf in adj_sin:
+                    if not pth or not Path(pth).exists():
+                        return
+    
+                    timeline[(fecha or "__NOFECHA__")].append((pth, hdr, toc_title))
+                    if fecha and fecha not in orden_fechas:
+                        orden_fechas.append(fecha)
+    
+                # 3) Abrir Libro y listar operaciones VISIBLES (sin forzar)
+                etapa("Abriendo 'Expediente como Libro'")
+                libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
+                if _es_login_intranet(libro):
+                    _login_intranet(libro, intra_user, intra_pass)
+                if "ExpedienteLibro.aspx" not in (libro.url or ""):
+                    libro = _abrir_libro(sac, intra_user, intra_pass, nro_exp)
+    
+                etapa("Cargando índice del Libro")
+                ops = _expandir_y_cargar_todo_el_libro(libro)
+                # Fallback de fechas por operacion desde el Indice del Libro
+                try:
+                    import re as _re
+                    op_fecha_map_alt: dict[str, str] = {}
+                    orden_fechas_alt: list[str] = []
+                    for it in ops:
+                        try:
+                            t = _norm_ws(it.get("titulo") or "")
+                        except Exception:
+                            t = ""
+                        m = _re.search(r"\b\d{2}/\d{2}/\d{4}\b", t)
+                        if m:
+                            d = m.group(0)
+                            op_fecha_map_alt[it["id"]] = d
+                            if not orden_fechas_alt or orden_fechas_alt[-1] != d:
+                                orden_fechas_alt.append(d)
+                    for k, v in op_fecha_map_alt.items():
+                        if k not in op_fecha_map:
+                            op_fecha_map[k] = v
+                    if (not orden_fechas) and orden_fechas_alt:
+                        orden_fechas = orden_fechas_alt
+                except Exception:
+                    pass
+                logging.info(f"[LIBRO] Índice cargado · operaciones visibles={len(ops)}")
+                if not ops:
+                    logging.info("[SEC] La UI no muestra operaciones en el Índice. Se continúa SIN operaciones.")
+                    ops = []
+                logging.info(f"[OPS] Encontradas {len(ops)} operaciones visibles en el índice.")
+    
+                # 4) Preparar contexto headless reutilizable para HTML->PDF (carátula + operaciones)
+                hbrowser = hctx = hp = None
+                try:
+                    state_print = temp_dir / "state_print.json"
+                    try:
+                        context.storage_state(path=str(state_print))
+                    except Exception:
+                        pass
+                    hbrowser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+                    hctx = hbrowser.new_context(
+                        storage_state=str(state_print), viewport={"width": 900, "height": 1200}
+                    )
+                    hp = hctx.new_page()
+                    try:
+                        hp.emulate_media(media="print")
+                    except Exception:
+                        pass
+                except Exception:
+                    hbrowser = hctx = hp = None
+    
+                # 4) Carátula (guardada aparte para que quede primera)
+                etapa("Renderizando carátula del expediente")
+                try:
+                    caratula_pdf = _render_caratula_a_pdf(libro, context, p, temp_dir, hctx=hctx, hp=hp)
+                    if caratula_pdf and caratula_pdf.exists():
+                        _mf(f"CARATULA · {caratula_pdf.name}")
+                        caratula_block = (caratula_pdf, None)
+                        logging.info("[CARATULA] capturada")
+                    else:
+                        logging.info("[CARATULA] no se pudo capturar (se continúa)")
+                except Exception as e:
+                    logging.info(f"[CARATULA:ERR] {e}")
+    
+                # 5) Adjuntos del GRID (mapeados por operación)
+                etapa("Descargando adjuntos desde Radiografía (grilla)")
+                try:
+                    sac.bring_to_front()
+                except Exception:
+                    pass
+                pdfs_grid = _descargar_adjuntos_grid_mapeado(sac, temp_dir)  # {op_id: [Path, ...]}
+                logging.info(f"[ADJ/GRID] Mapeo adjuntos por operación: { {k: len(v) for k, v in pdfs_grid.items()} }")
+    
+                # Helper: adjuntos de operación (Libro + Grid) — se depositan en el día de la operación
+                def _agregar_adjuntos_de_op(op_id: str, titulo: str, fecha_op: str | None):
+                    pdfs_op: list[Path] = []
+                    try:
+                        pdfs_op.extend(_descargar_adjuntos_de_operacion(libro, op_id, temp_dir))
+                    except Exception:
+                        pass
+                    pdfs_op.extend(pdfs_grid.get(op_id, []))
+                    for ap in pdfs_op:
+                        pth = (
+                            ap
+                            if ap.suffix.lower() == ".pdf"
+                            else (_ensure_pdf_fast(ap) if "_ensure_pdf_fast" in globals() else _ensure_pdf(ap))
+                        )
+                        if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                            continue
+                        _mf(f"ADJUNTO · {titulo} · {pth.name}")
+                        hdr = (f"ADJUNTO · {titulo}") if STAMP else None
+                        hdr = (f"ADJUNTO - {titulo}") if STAMP else None
+                        _push_pdf(pth, hdr, fecha=fecha_op, toc_title=f"ADJUNTO - {titulo}")
+    
+                # 6) Operaciones (render por páginas sólo si están visibles)
+                op_pdfs_capturados = 0
+                etapa("Procesando operaciones visibles del Libro")
+                for o in ops:
+                    op_id = o["id"]
+                    op_tipo = o["tipo"]
+                    titulo = (o.get("titulo") or "").strip() or f"Operación {op_id}"
+                    fecha_op = op_fecha_map.get(op_id, None)  # fecha desde la grilla
+                    logging.info(
+                        f"[OP] Procesando operación · id={op_id} · tipo='{op_tipo}' · titulo='{titulo}' · fecha='{fecha_op or '-'}'"
+                    )
+    
+                    # Mostrar y chequear visibilidad real del contenedor de la operación
+                    _mostrar_operacion(libro, op_id, op_tipo)
+                    S = _libro_scope(libro)
+                    cont = _buscar_contenedor_operacion(S, op_id)
+                    if not cont:
+                        logging.info(f"[OP] {op_id}: contenedor no encontrado; se continúa con adjuntos.")
+                        _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
+                        continue
+    
+                    visible = False
+                    try:
+                        if cont.count() and cont.is_visible():
+                            bb = cont.bounding_box()
+                            visible = bool(bb and bb.get("width", 0) > 40 and bb.get("height", 0) > 40)
+                    except Exception:
+                        visible = False
+    
+                    if not visible:
+                        logging.info(
+                            f"[OP] {op_id}: contenedor no visible; se omite render de operación (se agregan adjuntos igual)."
+                        )
+                        _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
+                        continue
+    
+                    # Render HTML ? PDF
+                    try:
+                        pdf_op = _render_operacion_a_pdf_paginas(libro, op_id, context, p, temp_dir, hctx=hctx, hp=hp)
+                    except Exception as e:
+                        logging.info(f"[OP:ERR] {op_id}: {e}")
+                        pdf_op = None
+    
+                    if pdf_op and pdf_op.exists():
+                        _mf(f"OPERACION · {titulo} · {pdf_op.name}")
+                        _push_pdf(pdf_op, None, fecha=fecha_op, toc_title=f"OPERACION - {titulo}")
+                        op_pdfs_capturados += 1
+                        logging.info(f"[OP] {op_id}: agregado (renderer de páginas)")
+                    else:
+                        logging.info(f"[OP] {op_id}: no se pudo renderizar (se continúa con adjuntos).")
+    
+                    # Adjuntos de esta operación (con la misma fecha de la operación)
+                    _agregar_adjuntos_de_op(op_id, titulo, fecha_op)
+    
+                # Cerrar contexto headless reutilizado
+                try:
+                    if hp:
+                        hp.close()
+                except Exception:
+                    pass
+                try:
+                    if hctx:
+                        hctx.close()
+                except Exception:
+                    pass
+                try:
+                    if hbrowser:
+                        hbrowser.close()
+                except Exception:
+                    pass
+    
+                # 5b) Informes técnicos — DESPUÉS de operaciones ? quedan al final del día
+                etapa("Descargando informes técnicos")
+                try:
+                    sac.bring_to_front()
+                except Exception:
+                    pass
+                informes_tecnicos = _descargar_informes_tecnicos(sac, temp_dir)
+                logging.info(f"[INF] Informes técnicos descargados: {len(informes_tecnicos)}")
+                for it_path, it_fecha in informes_tecnicos:
                     pth = (
-                        pdf
-                        if pdf.suffix.lower() == ".pdf"
-                        else (_ensure_pdf_fast(pdf) if "_ensure_pdf_fast" in globals() else _ensure_pdf(pdf))
+                        it_path
+                        if it_path.suffix.lower() == ".pdf"
+                        else (_ensure_pdf_fast(it_path) if "_ensure_pdf_fast" in globals() else _ensure_pdf(it_path))
                     )
                     if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
                         continue
-                    _mf(f"ADJUNTO · (sin operación) · {pth.name}")
-                    hdr = ("ADJUNTO · (sin operación)") if STAMP else None
-                    _push_pdf(pth, hdr, fecha=None, toc_title=hdr)
-
-            # === 3.e) Construcción final en orden cronológico ===
-            hay_algo = any(timeline.values()) or bool(caratula_block)
-            if not hay_algo:
-                raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
-
-            # Reordenar listas por fecha para que el índice quede de las
-            # operaciones más antiguas a las más recientes.
-            for k in list(timeline.keys()):
-                timeline[k].reverse()
-            def _key_fecha(s: str):
+                    _mf(f"INF_TEC · {it_fecha} · {pth.name}")
+                    hdr = (f"INFORME TÉCNICO · {it_fecha}") if STAMP else None
+                    toc_it = f"INFORME TECNICO MPF - {it_fecha}" if it_fecha else "INFORME TECNICO MPF"
+                    _push_pdf(pth, hdr, fecha=it_fecha, toc_title=toc_it)
+    
+                    # Extraer anexos embebidos (si existe la función)
+                    try:
+                        anexos = _extraer_adjuntos_embebidos(pth, temp_dir) if '_extraer_adjuntos_embebidos' in globals() else []
+                    except Exception:
+                        anexos = []
+                    for an in anexos:
+                        an = Path(an)
+                        an_pdf = (
+                            an if an.suffix.lower() == ".pdf"
+                            else (_ensure_pdf_fast(an) if "_ensure_pdf_fast" in globals() else _ensure_pdf(an))
+                        )
+                        if not an_pdf or not Path(an_pdf).exists() or Path(an_pdf).suffix.lower() != ".pdf":
+                            continue
+                        _mf(f"INF_TEC/ANEXO · {it_fecha} · {Path(an_pdf).name}")
+                        hdr_an = (f"INFORME TÉCNICO – ANEXO · {it_fecha}") if STAMP else None
+                        hdr_an = (f"INFORME TECNICO - ANEXO - {it_fecha}") if STAMP else None
+                        toc_an = f"INFORME TECNICO MPF - ANEXO - {it_fecha}" if it_fecha else "INFORME TECNICO MPF - ANEXO"
+                        _push_pdf(Path(an_pdf), hdr_an, fecha=it_fecha, toc_title=toc_an)
+                if op_pdfs_capturados == 0:
+                    logging.info("[FALLBACK] Ninguna operación pudo renderizarse; intento PDF del Libro.")
+                    libro_pdf = _imprimir_libro_a_pdf(libro, context, temp_dir, p)
+                    if not (libro_pdf and libro_pdf.exists() and libro_pdf.stat().st_size > 1024):
+                        html_snap = _guardar_libro_como_html(libro, temp_dir)
+                        if html_snap and html_snap.exists():
+                            libro_pdf = _convertir_html_a_pdf(html_snap, context, p, temp_dir)
+                    if libro_pdf and libro_pdf.exists() and libro_pdf.stat().st_size > 1024:
+                        try:
+                            libro_pdf = _pdf_sin_blancos(libro_pdf)
+                        except Exception:
+                            pass
+                        _mf(f"LIBRO · {libro_pdf.name}")
+                        _push_pdf(libro_pdf, None, fecha=None, toc_title="LIBRO")
+                    else:
+                        logging.info("[FALLBACK] No se pudo obtener PDF del Libro por ningún método.")
+    
+                # 8) Adjuntos sin operación mapeada ? al final (sin fecha)
+                # 5c) Informes Registro Nacional de Reincidencia (RNR)
+                etapa("Descargando informes RNR")
                 try:
-                    d, m, a = s.split("/")
-                    return (int(a), int(m), int(d))
-                except Exception:
-                    return (9999, 99, 99)
-            orden_fechas = sorted(orden_fechas, key=_key_fecha)
-
-            bloques_final = []  # list of (Path, header, toc_title?)
-            if caratula_block:
-                bloques_final.append(caratula_block)
-
-            # 1) Fechas en el orden que aparece la grilla de operaciones
-            for f in orden_fechas:
-                bloques_final.extend(timeline.get(f, []))
-
-            # 2) Fechas que no estaban en la grilla (p.ej. sólo IT)
-            restantes = [f for f in timeline.keys() if f not in set(orden_fechas) and f != "__NOFECHA__"]
-            for f in sorted(restantes, key=_key_fecha):
-                bloques_final.extend(timeline.get(f, []))
-
-            # 3) Elementos sin fecha ? al final
-            bloques_final.extend(timeline.get("__NOFECHA__", []))
-            # 9) Fusión final
-            # Reordenar bloques por fechas con fallback si falta orden desde Radiografia
-            try:
-                bloques_final2: list[tuple[Path, str | None]] = []
-                if caratula_block:
-                    bloques_final2.append(caratula_block)
-                fechas_keys = [f for f in timeline.keys() if f != "__NOFECHA__"]
-                if orden_fechas:
-                    _set_ord = set(orden_fechas)
-                    restantes = [f for f in set(fechas_keys) if f not in _set_ord]
-                    fechas_iter = list(orden_fechas) + sorted(restantes, key=_key_fecha)
-                else:
-                    fechas_iter = sorted(set(fechas_keys), key=_key_fecha)
-                for f in fechas_iter:
-                    bloques_final2.extend(timeline.get(f, []))
-                bloques_final2.extend(timeline.get("__NOFECHA__", []))
-                bloques_final = bloques_final2
-            except Exception:
-                pass
-
-            out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
-            idx_pages, idx_map = fusionar_bloques_con_indice(
-                bloques_final,
-                out,
-                index_title="INDICE",
-                keep_sidecar=_env_true("KEEP_TOC", "0"),
-            )
-
-            # Diagnóstico inicial: links presentes justo tras fusionar
-            try:
-                _log_links_en_pagina(out, 1, "INDICE/ANTES_POST")
-            except Exception:
-                pass
-
-            # Intentar aplicar OCR al PDF final
-            ocr_out = _maybe_ocr(out)
-            if ocr_out != out:
-                shutil.move(ocr_out, out)
-
-            # Diagnóstico después del OCR “ligero”
-            try:
-                _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR")
-            except Exception:
-                pass
-
-            if _env_true("OCR_FINAL_FORCE"):
-                try:
-                    tmp_out = out.with_name(out.stem + "_ocr.pdf")
-                    subprocess.run(
-                        [
-                            "ocrmypdf",
-                            "--force-ocr",
-                            "--language", "spa",
-                            "--image-dpi", "300",
-                            "--deskew",
-                            "--rotate-pages",
-                            "--optimize", "3",
-                            str(out),
-                            str(tmp_out),
-                        ],
-                        check=True,
-                    )
-                    shutil.move(tmp_out, out)
-                except Exception:
-                    logging.exception("[OCR] Falló OCR final")
-
-                # Diagnóstico después del OCR forzado
-                try:
-                    _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR_FORCE")
+                    sac.bring_to_front()
                 except Exception:
                     pass
-
-            # === FOJAS (numeración de hojas) ===
-            try:
-                # Deja la carátula y el índice sin número; numera desde la siguiente,
-                # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
-                _agregar_fojas(
+                try:
+                    informes_rnr = _descargar_informes_reincidencia(sac, temp_dir)
+                except Exception:
+                    informes_rnr = []
+                logging.info(f"[RNR] Informes RNR descargados: {len(informes_rnr)}")
+                for rnr_path, rnr_fecha in informes_rnr:
+                    pth = (
+                        rnr_path
+                        if rnr_path.suffix.lower() == ".pdf"
+                        else (_ensure_pdf_fast(rnr_path) if "_ensure_pdf_fast" in globals() else _ensure_pdf(rnr_path))
+                    )
+                    if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                        continue
+                    _mf(f"RNR - {rnr_fecha or '-'} - {pth.name}")
+                    hdr = (f"INFORME RNR - {rnr_fecha}") if STAMP and rnr_fecha else ("INFORME RNR" if STAMP else None)
+                    _push_pdf(pth, hdr, fecha=(rnr_fecha or None), toc_title=("INFORME RNR - " + (rnr_fecha or "")))
+                    logging.info(f"[MERGE] RNR - {pth.name} (fecha {rnr_fecha or '-'})")
+    
+                adj_sin = pdfs_grid.get("__SIN_OP__", [])
+                if adj_sin:
+                    logging.info(f"[ADJ] SIN_OP · {len(adj_sin)} archivo(s)")
+                    for pdf in adj_sin:
+                        pth = (
+                            pdf
+                            if pdf.suffix.lower() == ".pdf"
+                            else (_ensure_pdf_fast(pdf) if "_ensure_pdf_fast" in globals() else _ensure_pdf(pdf))
+                        )
+                        if not pth or not pth.exists() or pth.suffix.lower() != ".pdf":
+                            continue
+                        _mf(f"ADJUNTO · (sin operación) · {pth.name}")
+                        hdr = ("ADJUNTO · (sin operación)") if STAMP else None
+                        _push_pdf(pth, hdr, fecha=None, toc_title=hdr)
+    
+                # === 3.e) Construcción final en orden cronológico ===
+                hay_algo = any(timeline.values()) or bool(caratula_block)
+                if not hay_algo:
+                    raise RuntimeError("No hubo nada para fusionar (no se pudo capturar operaciones ni adjuntos).")
+    
+                # Reordenar listas por fecha para que el índice quede de las
+                # operaciones más antiguas a las más recientes.
+                for k in list(timeline.keys()):
+                    timeline[k].reverse()
+                def _key_fecha(s: str):
+                    try:
+                        d, m, a = s.split("/")
+                        return (int(a), int(m), int(d))
+                    except Exception:
+                        return (9999, 99, 99)
+                orden_fechas = sorted(orden_fechas, key=_key_fecha)
+    
+                bloques_final = []  # list of (Path, header, toc_title?)
+                if caratula_block:
+                    bloques_final.append(caratula_block)
+    
+                # 1) Fechas en el orden que aparece la grilla de operaciones
+                for f in orden_fechas:
+                    bloques_final.extend(timeline.get(f, []))
+    
+                # 2) Fechas que no estaban en la grilla (p.ej. sólo IT)
+                restantes = [f for f in timeline.keys() if f not in set(orden_fechas) and f != "__NOFECHA__"]
+                for f in sorted(restantes, key=_key_fecha):
+                    bloques_final.extend(timeline.get(f, []))
+    
+                # 3) Elementos sin fecha ? al final
+                bloques_final.extend(timeline.get("__NOFECHA__", []))
+                # 9) Fusión final
+                # Reordenar bloques por fechas con fallback si falta orden desde Radiografia
+                try:
+                    bloques_final2: list[tuple[Path, str | None]] = []
+                    if caratula_block:
+                        bloques_final2.append(caratula_block)
+                    fechas_keys = [f for f in timeline.keys() if f != "__NOFECHA__"]
+                    if orden_fechas:
+                        _set_ord = set(orden_fechas)
+                        restantes = [f for f in set(fechas_keys) if f not in _set_ord]
+                        fechas_iter = list(orden_fechas) + sorted(restantes, key=_key_fecha)
+                    else:
+                        fechas_iter = sorted(set(fechas_keys), key=_key_fecha)
+                    for f in fechas_iter:
+                        bloques_final2.extend(timeline.get(f, []))
+                    bloques_final2.extend(timeline.get("__NOFECHA__", []))
+                    bloques_final = bloques_final2
+                except Exception:
+                    pass
+    
+                out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
+                idx_pages, idx_map = fusionar_bloques_con_indice(
+                    bloques_final,
                     out,
-                    start_after=1 + idx_pages,
-                    cada_dos=True,
-                    numero_inicial=1,
+                    index_title="INDICE",
+                    keep_sidecar=_env_true("KEEP_TOC", "0"),
                 )
-                logging.info("[FOJAS] Numeración de fojas aplicada")
-            except Exception as e:
-                logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
-
-            # Diagnóstico tras fojas (antes de reinyectar)
-            try:
-                _log_links_en_pagina(out, 1, "INDICE/ANTES_RELINK")
-            except Exception:
-                pass
-
-            # Reinyectar links (por si OCR/fojas los borraron)
-            try:
-                ok = _relink_indice_con_fitz(out, idx_map)
-                logging.info(f"[INDICE/LINK] reinyectado={ok} items={len(idx_map)}")
-            except Exception as e:
-                logging.info(f"[INDICE/LINK:ERR] {e}")
-
-            # Diagnóstico final
-            try:
-                _log_links_en_pagina(out, 1, "INDICE/FINAL")
-            except Exception:
-                pass
-
-            _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques_final)})")
-            logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques_final)}")
-            etapa("Listo: PDF final creado")
-            messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
-
-        finally:
-            try:
-                context.close()
-            except Exception:
-                pass
-            try:
-                browser.close()
-            except Exception:
-                pass
+    
+                # Diagnóstico inicial: links presentes justo tras fusionar
+                try:
+                    _log_links_en_pagina(out, 1, "INDICE/ANTES_POST")
+                except Exception:
+                    pass
+    
+                # Intentar aplicar OCR al PDF final
+                ocr_out = _maybe_ocr(out)
+                if ocr_out != out:
+                    shutil.move(ocr_out, out)
+    
+                # Diagnóstico después del OCR “ligero”
+                try:
+                    _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR")
+                except Exception:
+                    pass
+    
+                if _env_true("OCR_FINAL_FORCE"):
+                    try:
+                        tmp_out = out.with_name(out.stem + "_ocr.pdf")
+                        subprocess.run(
+                            [
+                                "ocrmypdf",
+                                "--force-ocr",
+                                "--language", "spa",
+                                "--image-dpi", "300",
+                                "--deskew",
+                                "--rotate-pages",
+                                "--optimize", "3",
+                                str(out),
+                                str(tmp_out),
+                            ],
+                            check=True,
+                        )
+                        shutil.move(tmp_out, out)
+                    except Exception:
+                        logging.exception("[OCR] Falló OCR final")
+    
+                    # Diagnóstico después del OCR forzado
+                    try:
+                        _log_links_en_pagina(out, 1, "INDICE/DESPUES_OCR_FORCE")
+                    except Exception:
+                        pass
+    
+                # === FOJAS (numeración de hojas) ===
+                try:
+                    # Deja la carátula y el índice sin número; numera desde la siguiente,
+                    # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
+                    _agregar_fojas(
+                        out,
+                        start_after=1 + idx_pages,
+                        cada_dos=True,
+                        numero_inicial=1,
+                    )
+                    logging.info("[FOJAS] Numeración de fojas aplicada")
+                except Exception as e:
+                    logging.info(f"[FOJAS] No se pudo estampar fojas: {e}")
+    
+                # Diagnóstico tras fojas (antes de reinyectar)
+                try:
+                    _log_links_en_pagina(out, 1, "INDICE/ANTES_RELINK")
+                except Exception:
+                    pass
+    
+                # Reinyectar links (por si OCR/fojas los borraron)
+                try:
+                    ok = _relink_indice_con_fitz(out, idx_map)
+                    logging.info(f"[INDICE/LINK] reinyectado={ok} items={len(idx_map)}")
+                except Exception as e:
+                    logging.info(f"[INDICE/LINK:ERR] {e}")
+    
+                # Diagnóstico final
+                try:
+                    _log_links_en_pagina(out, 1, "INDICE/FINAL")
+                except Exception:
+                    pass
+    
+                _mf(f"==> PDF FINAL: {out.name} (total bloques={len(bloques_final)})")
+                logging.info(f"[OK] PDF final creado: {out} · bloques={len(bloques_final)}")
+                etapa("Listo: PDF final creado")
+                messagebox.showinfo("Éxito", f"PDF creado en:\n{out}")
+    
+            finally:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
 
 
