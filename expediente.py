@@ -667,6 +667,14 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 index_pages = []
                 for i in range(idx_page_count):
                     pg = dst.new_page(pno=1 + i, width=pw, height=ph)
+                    # Algunas versiones de PyMuPDF pueden devolver None o un
+                    # índice entero. Normalizamos para obtener siempre un
+                    # objeto Page válido.
+                    if pg is None:
+                        try:
+                            pg = dst[1 + i]
+                        except Exception:
+                            continue
                     if isinstance(pg, int):
                         pg = dst[pg]
                     index_pages.append(pg)
