@@ -883,12 +883,17 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 except PermissionError:
                     # El archivo destino está abierto; guardar con un nombre alternativo
                     alt = pdf_path
+                    orig = pdf_path
                     i = 1
                     while alt.exists():
                         alt = pdf_path.with_name(f"{pdf_path.stem} ({i}){pdf_path.suffix}")
                         i += 1
                     shutil.move(str(tmp), str(alt))
                     logging.info(f"[INDICE/LINK] destino en uso, guardado como {alt.name}")
+                    try:
+                        orig.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                     pdf_path = alt
                 finally:
                     tmp.unlink(missing_ok=True)
