@@ -834,14 +834,16 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
 
 def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
-                            left=36, right=36, line_h=20, pad_top=3, pad_bottom=3):
+                            left=36, right=36, line_h=20, pad_top=3, pad_bottom=3) -> tuple[bool, Path]:
     """
     Reinyecta anotaciones clickeables en las páginas de índice tras OCR/fojas.
     items: [{'start':1,'target':7,'y':70,'title':'...'}, ...]
+    Devuelve (ok, path_final) donde path_final puede diferir si el archivo de
+    destino estaba en uso.
     """
-    import fitz, math, os, time
+    import fitz, math, os, time, shutil
     if not items:
-        return True
+        return True, pdf_path
     try:
         doc = fitz.open(str(pdf_path))
 
@@ -879,8 +881,15 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 try:
                     os.replace(str(tmp), str(pdf_path))
                 except PermissionError:
-                    time.sleep(0.5)
-                    os.replace(str(tmp), str(pdf_path))
+                    # El archivo destino está abierto; guardar con un nombre alternativo
+                    alt = pdf_path
+                    i = 1
+                    while alt.exists():
+                        alt = pdf_path.with_name(f"{pdf_path.stem} ({i}){pdf_path.suffix}")
+                        i += 1
+                    shutil.move(str(tmp), str(alt))
+                    logging.info(f"[INDICE/LINK] destino en uso, guardado como {alt.name}")
+                    pdf_path = alt
                 finally:
                     tmp.unlink(missing_ok=True)
             else:
@@ -888,10 +897,10 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 raise
         else:
             doc.close()
-        return True
+        return True, pdf_path
     except Exception as e:
         logging.info(f"[INDICE/LINK:ERR] {e}")
-        return False
+        return False, pdf_path
 
 
 def _log_links_en_pagina(pdf_path: Path, pagina_1b: int, etiqueta: str):
@@ -5780,7 +5789,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
     
                 # Reinyectar links (por si OCR/fojas los borraron)
                 try:
-                    ok = _relink_indice_con_fitz(out, idx_map)
+                    ok, out = _relink_indice_con_fitz(out, idx_map)
                     logging.info(f"[INDICE/LINK] reinyectado={ok} items={len(idx_map)}")
                 except Exception as e:
                     logging.info(f"[INDICE/LINK:ERR] {e}")
