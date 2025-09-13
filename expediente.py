@@ -667,52 +667,63 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 idx_page_count = _calc_pages(len(entries))
                 index_pages = []
                 for i in range(idx_page_count):
-                    pg = dst.new_page(pno=1 + i, width=pw, height=ph)
-                    # Algunas versiones de PyMuPDF pueden devolver None o un
-                    # índice entero. Normalizamos para obtener siempre un
-                    # objeto Page válido.
-                    if pg is None:
-                        try:
-                            pg = dst[1 + i]
-                        except Exception:
-                            continue
-                    if isinstance(pg, int):
-                        pg = dst[pg]
-                    index_pages.append(pg)
-                try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
-                except Exception: pass
-
-                def _foja_for_page(p: int):
-                    # p es 0-based del PDF final
-                    skip = 1 + idx_page_count  # carátula + índice
-                    if p < skip:
-                        return None
-                    return 1 + ((p - skip) // 2)
-
-                use_foja_numbers = _env_true("FOJAS", "1")
-
-                page_idx = 0
-                idx_page = index_pages[page_idx]
-                try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-                except Exception: pass
-                y = y_start
-                toc_outline = []
-
-                for title, start_page in entries:
-                    if y > ph - margin - 24:
-                        page_idx += 1
-                        idx_page = index_pages[page_idx]
-                        try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                        except Exception: pass
-                        y = y_start
-
-                    t = str(title)[:120]
+                    pno = 1 + i
                     try:
-                        idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
+                        dst.new_page(pno=pno, width=pw, height=ph)
+                        pg = dst.load_page(pno)
                     except Exception as e:
-                        try: logging.info(f"[INDICE] insert_text error: {e}")
+                        try: logging.warning(f"[INDICE] no se pudo crear/cargar página {pno}: {e}")
                         except Exception: pass
                         continue
+                    if getattr(pg, "parent", None) is None:
+                        try: logging.warning(f"[INDICE] página {pno} sin parent; se omite")
+                        except Exception: pass
+                        continue
+                    index_pages.append(pg)
+
+                if not index_pages:
+                    try: logging.warning("[INDICE] no se generaron páginas válidas de índice")
+                    except Exception: pass
+                else:
+                    idx_page_count = len(index_pages)
+                    try: logging.info(f"[INDICE] entries={len(entries)} idx_pages={idx_page_count}")
+                    except Exception: pass
+
+                    def _foja_for_page(p: int):
+                        # p es 0-based del PDF final
+                        skip = 1 + idx_page_count  # carátula + índice
+                        if p < skip:
+                            return None
+                        return 1 + ((p - skip) // 2)
+
+                    use_foja_numbers = _env_true("FOJAS", "1")
+
+                    page_idx = 0
+                    idx_page = index_pages[page_idx]
+                    try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
+                    except Exception: pass
+                    y = y_start
+                    toc_outline = []
+
+                    for title, start_page in entries:
+                        if y > ph - margin - 24:
+                            page_idx += 1
+                            if page_idx >= len(index_pages):
+                                try: logging.warning("[INDICE] páginas de índice insuficientes; se detiene la generación")
+                                except Exception: pass
+                                break
+                            idx_page = index_pages[page_idx]
+                            try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
+                            except Exception: pass
+                            y = y_start
+
+                        t = str(title)[:120]
+                        try:
+                            idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
+                        except Exception as e:
+                            try: logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception: pass
+                            continue
 
                     # ancho título (punteado)
                     try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
@@ -762,35 +773,35 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     })
                     y += fs + 8
 
-                try:
-                    if toc_outline:
-                        dst.set_toc(toc_outline)
-                except Exception:
-                    pass
+                    try:
+                        if toc_outline:
+                            dst.set_toc(toc_outline)
+                    except Exception:
+                        pass
 
-                # Sidecar
-                try:
-                    sidecar = destino.with_suffix(".toc.json")
-                    import json
-                    with open(sidecar, "w", encoding="utf-8") as f:
-                        json.dump({"items": relink_items, "idx_pages": idx_page_count},
-                                  f, ensure_ascii=False, indent=2)
-                    logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
-                    if not keep_sidecar:
-                        sidecar.unlink(missing_ok=True)
-                except Exception as e:
-                    logging.info(f"[INDICE] sidecar error: {e}")
+                    # Sidecar
+                    try:
+                        sidecar = destino.with_suffix(".toc.json")
+                        import json
+                        with open(sidecar, "w", encoding="utf-8") as f:
+                            json.dump({"items": relink_items, "idx_pages": idx_page_count},
+                                      f, ensure_ascii=False, indent=2)
+                        logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
+                        if not keep_sidecar:
+                            sidecar.unlink(missing_ok=True)
+                    except Exception as e:
+                        logging.info(f"[INDICE] sidecar error: {e}")
 
-                # Diagnóstico: contar links por página del índice
-                try:
-                    for p in index_pages:
-                        ln, c = p.first_link, 0
-                        while ln:
-                            c += 1
-                            ln = ln.next
-                        logging.info(f"[INDICE] links en página {p.number+1}: {c}")
-                except Exception:
-                    pass
+                    # Diagnóstico: contar links por página del índice
+                    try:
+                        for p in index_pages:
+                            ln, c = p.first_link, 0
+                            while ln:
+                                c += 1
+                                ln = ln.next
+                            logging.info(f"[INDICE] links en página {p.number+1}: {c}")
+                    except Exception:
+                        pass
             else:
                 try: logging.info("[INDICE] sin entradas; no se genera índice")
                 except Exception: pass
