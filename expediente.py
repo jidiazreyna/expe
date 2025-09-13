@@ -890,10 +890,14 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                         i += 1
                     shutil.move(str(tmp), str(alt))
                     logging.info(f"[INDICE/LINK] destino en uso, guardado como {alt.name}")
-                    try:
-                        orig.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    for _ in range(5):
+                        try:
+                            orig.unlink(missing_ok=True)
+                            break
+                        except PermissionError:
+                            time.sleep(0.2)
+                        except Exception:
+                            break
                     pdf_path = alt
                 finally:
                     tmp.unlink(missing_ok=True)
