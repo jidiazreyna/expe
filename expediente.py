@@ -709,69 +709,85 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         if y > ph - margin - 24:
                             page_idx += 1
                             if page_idx >= len(index_pages):
-                                try: logging.warning("[INDICE] páginas de índice insuficientes; se detiene la generación")
-                                except Exception: pass
+                                try:
+                                    logging.warning("[INDICE] páginas de índice insuficientes; se detiene la generación")
+                                except Exception:
+                                    pass
                                 break
                             idx_page = index_pages[page_idx]
-                            try: idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                            except Exception: pass
+                            try:
+                                idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
+                            except Exception:
+                                pass
                             y = y_start
 
                         t = str(title)[:120]
                         try:
                             idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
                         except Exception as e:
-                            try: logging.info(f"[INDICE] insert_text error: {e}")
-                            except Exception: pass
+                            try:
+                                logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception:
+                                pass
                             continue
 
-                    # ancho título (punteado)
-                    try: tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
-                    except Exception: tw_title = fs * max(1, len(t)) * 0.6
+                        # ancho título (punteado)
+                        try:
+                            tw_title = fitz.get_text_length(t, fontname="helv", fontsize=fs)
+                        except Exception:
+                            tw_title = fs * max(1, len(t)) * 0.6
 
-                    target_page = start_page + idx_page_count  # 0-based
-                    toc_outline.append([1, t, target_page + 1])
+                        target_page = start_page + idx_page_count  # 0-based
+                        toc_outline.append([1, t, target_page + 1])
 
-                    try: logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
-                    except Exception: pass
+                        try:
+                            logging.info(f"[INDICE] item title={t[:50]} start={start_page} target={target_page} y={y}")
+                        except Exception:
+                            pass
 
-                    fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
-                    fj_txt = str(fj) if fj is not None else "-"
+                        fj = _foja_for_page(target_page) if use_foja_numbers else (target_page + 1)
+                        fj_txt = str(fj) if fj is not None else "-"
 
-                    try: tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
-                    except Exception: tw = fs * max(1, len(fj_txt)) * 0.6
+                        try:
+                            tw = fitz.get_text_length(fj_txt, fontname="helv", fontsize=fs)
+                        except Exception:
+                            tw = fs * max(1, len(fj_txt)) * 0.6
 
-                    left_end = x_left + tw_title + 6
-                    dot_area_right = x_right - tw - 6
-                    if dot_area_right > left_end:
-                        try: tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
-                        except Exception: tw_dot = fs * 0.6
-                        if tw_dot > 0:
-                            n = int((dot_area_right - left_end) / tw_dot)
-                            if n > 2:
-                                try:
-                                    idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
-                                except Exception:
-                                    pass
+                        left_end = x_left + tw_title + 6
+                        dot_area_right = x_right - tw - 6
+                        if dot_area_right > left_end:
+                            try:
+                                tw_dot = fitz.get_text_length(".", fontname="helv", fontsize=fs)
+                            except Exception:
+                                tw_dot = fs * 0.6
+                            if tw_dot > 0:
+                                n = int((dot_area_right - left_end) / tw_dot)
+                                if n > 2:
+                                    try:
+                                        idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
+                                    except Exception:
+                                        pass
 
-                    try:
-                        idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
-                    except Exception:
-                        pass
+                        try:
+                            idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
+                        except Exception:
+                            pass
 
-                    # Rect clickable
-                    link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                    ok_link = _add_goto_link(idx_page, link_rect, target_page)
-                    try: logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
-                    except Exception: pass
+                        # Rect clickable
+                        link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
+                        ok_link = _add_goto_link(idx_page, link_rect, target_page)
+                        try:
+                            logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
+                        except Exception:
+                            pass
 
-                    relink_items.append({
-                        "title": t,
-                        "start": (idx_page.number + 1),   # 1-based
-                        "target": (target_page + 1),      # 1-based
-                        "y": float(y)
-                    })
-                    y += fs + 8
+                        relink_items.append({
+                            "title": t,
+                            "start": (idx_page.number + 1),   # 1-based
+                            "target": (target_page + 1),      # 1-based
+                            "y": float(y)
+                        })
+                        y += fs + 8
 
                     try:
                         if toc_outline:
