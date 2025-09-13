@@ -9,7 +9,7 @@ Descarga un expediente del SAC (vía Teletrabajo -> Portal de Aplicaciones -> In
 adjuntos incluidos, y arma un único PDF.
 """
 
-import os, sys, tempfile, shutil, datetime, threading, re, logging
+import os, sys, tempfile, shutil, datetime, threading, re, logging, contextlib
 from pathlib import Path
 from tkinter import Tk, Label, Entry, Button, StringVar, filedialog, messagebox
 from dotenv import load_dotenv
@@ -555,13 +555,14 @@ except Exception:
             except Exception:
                 pass
 
-def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDICE"):
+def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDICE", keep_sidecar: bool = False):
     """
     Fusiona bloques PDF, inserta un índice clickable detrás de la carátula y devuelve
     (idx_page_count, relink_items) donde:
       - idx_page_count: cantidad de páginas del índice insertadas
       - relink_items  : [{'title', 'start', 'target', 'y'}] para re-inyectar links post-OCR
     También escribe <destino>.toc.json con ese mapeo.
+    El archivo auxiliar se elimina automáticamente salvo que keep_sidecar sea True.
     """
     try:
         import fitz  # PyMuPDF
@@ -775,6 +776,8 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         json.dump({"items": relink_items, "idx_pages": idx_page_count},
                                   f, ensure_ascii=False, indent=2)
                     logging.info(f"[INDICE] sidecar guardado: {sidecar.name} (items={len(relink_items)})")
+                    if not keep_sidecar:
+                        sidecar.unlink(missing_ok=True)
                 except Exception as e:
                     logging.info(f"[INDICE] sidecar error: {e}")
 
@@ -851,6 +854,8 @@ def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
                 except PermissionError:
                     time.sleep(0.5)
                     os.replace(str(tmp), str(pdf_path))
+                finally:
+                    tmp.unlink(missing_ok=True)
             else:
                 doc.close()
                 raise
@@ -1242,10 +1247,7 @@ def _estampar_header(origen: Path, destino: Path, texto="ADJUNTO"):
         overlay = PdfReader(str(tmp)).pages[0]
         p.merge_page(overlay)
         w.add_page(p)
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        tmp.unlink(missing_ok=True)
 
     with open(destino, "wb") as f:
         w.write(f)
@@ -5200,10 +5202,7 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
         with open(tmpout, "wb") as f:
             w.write(f)
         for t in temps:
-            try:
-                Path(t).unlink()
-            except Exception:
-                pass
+            Path(t).unlink(missing_ok=True)
         shutil.move(tmpout, pdf_in)
         return pdf_in
 
@@ -5221,50 +5220,50 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
     STAMP = _env_true("STAMP_HEADERS", "1")
 
     work_dir = Path(carpeta_salida) / f"Exp_{nro_exp}_work"
-    if KEEP_WORK:
-        temp_dir = work_dir
-        temp_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        temp_dir = Path(tempfile.mkdtemp())
-    os.environ.setdefault("TMP", str(temp_dir))
-    os.environ.setdefault("TEMP", str(temp_dir))
+    temp_ctx = TemporaryDirectory() if not KEEP_WORK else contextlib.nullcontext(work_dir)
+    with temp_ctx as tmp_name:
+        temp_dir = Path(tmp_name)
+        if KEEP_WORK:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("TMP", str(temp_dir))
+        os.environ.setdefault("TEMP", str(temp_dir))
 
-    def _mf(line: str):
-        logging.info(line)
+        def _mf(line: str):
+            logging.info(line)
 
-    etapa("Preparando entorno y navegador")
+        etapa("Preparando entorno y navegador")
 
-    with sync_playwright() as p:
-        etapa("Inicializando navegador")
-        browser = p.chromium.launch(
-            headless=not SHOW_BROWSER,
-            args=CHROMIUM_ARGS,
-            slow_mo=0,
-        )
-        logging.info("[NAV] Chromium lanzado")
-
-        if SHOW_BROWSER:
-            context = browser.new_context(
-                accept_downloads=True,
-                viewport={"width": 1366, "height": 900},
+        with sync_playwright() as p:
+            etapa("Inicializando navegador")
+            browser = p.chromium.launch(
+                headless=not SHOW_BROWSER,
+                args=CHROMIUM_ARGS,
+                slow_mo=0,
             )
-            logging.info("[NAV] Contexto de navegador creado")
-        else:
-            # Evitar grabar video por defecto: impacta mucho en performance.
-            # Si necesitás video, exportá RECORD_VIDEO=1
-            if _env_true("RECORD_VIDEO", "0"):
-                vid_dir = temp_dir / "video"
-                vid_dir.mkdir(parents=True, exist_ok=True)
+            logging.info("[NAV] Chromium lanzado")
+
+            if SHOW_BROWSER:
                 context = browser.new_context(
                     accept_downloads=True,
                     viewport={"width": 1366, "height": 900},
-                    record_video_dir=str(vid_dir),
                 )
+                logging.info("[NAV] Contexto de navegador creado")
             else:
-                context = browser.new_context(
-                    accept_downloads=True,
-                    viewport={"width": 1366, "height": 900},
-                )
+                # Evitar grabar video por defecto: impacta mucho en performance.
+                # Si necesitás video, exportá RECORD_VIDEO=1
+                if _env_true("RECORD_VIDEO", "0"):
+                    vid_dir = temp_dir / "video"
+                    vid_dir.mkdir(parents=True, exist_ok=True)
+                    context = browser.new_context(
+                        accept_downloads=True,
+                        viewport={"width": 1366, "height": 900},
+                        record_video_dir=str(vid_dir),
+                    )
+                else:
+                    context = browser.new_context(
+                        accept_downloads=True,
+                        viewport={"width": 1366, "height": 900},
+                    )
 
         try:
             etapa("Accediendo a Teletrabajo/Intranet y abriendo SAC")
@@ -5681,7 +5680,12 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 pass
 
             out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
-            idx_pages, idx_map = fusionar_bloques_con_indice(bloques_final, out, index_title="INDICE")
+            idx_pages, idx_map = fusionar_bloques_con_indice(
+                bloques_final,
+                out,
+                index_title="INDICE",
+                keep_sidecar=_env_true("KEEP_TOC", "0"),
+            )
 
             # Diagnóstico inicial: links presentes justo tras fusionar
             try:
@@ -5774,8 +5778,6 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                 browser.close()
             except Exception:
                 pass
-            if not KEEP_WORK:
-                shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 
