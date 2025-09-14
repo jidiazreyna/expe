@@ -5725,6 +5725,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     pass
     
                 out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
+                out_sin_links = out
                 idx_pages, idx_map = fusionar_bloques_con_indice(
                     bloques_final,
                     out,
@@ -5798,8 +5799,19 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
     
                 # Reinyectar links (por si OCR/fojas los borraron)
                 try:
-                    ok, out = _relink_indice_con_fitz(out, idx_map)
+                    ok, out_final = _relink_indice_con_fitz(out, idx_map)
                     logging.info(f"[INDICE/LINK] reinyectado={ok} items={len(idx_map)}")
+                    if out_final != out_sin_links:
+                        try:
+                            out_sin_links.unlink(missing_ok=True)
+                            logging.info(
+                                f"[INDICE/LINK] duplicado sin links eliminado: {out_sin_links.name}"
+                            )
+                        except Exception as e_del:
+                            logging.info(
+                                f"[INDICE/LINK] no se pudo eliminar duplicado: {e_del}"
+                            )
+                    out = out_final
                 except Exception as e:
                     logging.info(f"[INDICE/LINK:ERR] {e}")
     
