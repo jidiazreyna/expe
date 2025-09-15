@@ -3523,6 +3523,11 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             fila = filas.nth(i)
         except Exception:
             continue
+        # Log del inicio de procesamiento
+        try:
+            logging.info(f"[RNR] Procesando fila {i}")
+        except Exception:
+            pass
 
         # Link/ícono candidato en la fila
         link = fila.locator(
@@ -3541,6 +3546,13 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                 except Exception:
                     pass
                 continue
+        else:
+            try:
+                href = link.get_attribute("href") if link and link.count() else ""
+                oc = link.get_attribute("onclick") if link and link.count() else ""
+                logging.info(f"[RNR] Fila {i}: link href={href} onclick={oc}")
+            except Exception:
+                pass
 
         # GUID/ID (si hubiera) para invocación directa
         guid = None
@@ -3569,6 +3581,10 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                 link.scroll_into_view_if_needed()
             except Exception:
                 pass
+            try:
+                logging.info(f"[RNR] Fila {i}: intento descarga directa")
+            except Exception:
+                pass
             with sac.expect_download(timeout=12000) as dl:
                 if link and link.count():
                     link.click(force=True)
@@ -3584,7 +3600,15 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             d = dl.value
             destino = carpeta / d.suggested_filename
             d.save_as(destino)
+            try:
+                logging.info(f"[RNR] Fila {i}: descarga directa OK -> {destino}")
+            except Exception:
+                pass
         except PWTimeoutError:
+            try:
+                logging.info(f"[RNR] Fila {i}: descarga directa timeout")
+            except Exception:
+                pass
             # 2) popup
             try:
                 if link and link.count():
@@ -3603,13 +3627,21 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                 pop = ctx.wait_for_event("page", timeout=6000)
                 try:
                     destino = _capturar_desde_pagina(pop, i)
+                    if destino:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: descarga desde popup OK -> {destino}")
+                        except Exception:
+                            pass
                 finally:
                     try:
                         pop.close()
                     except Exception:
                         pass
             except PWTimeoutError:
-                pass
+                try:
+                    logging.info(f"[RNR] Fila {i}: no hubo popup")
+                except Exception:
+                    pass
 
             # 3) inline en la misma página
             if not destino:
@@ -3620,6 +3652,10 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                             return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
                         except Exception:
                             return False
+                    try:
+                        logging.info(f"[RNR] Fila {i}: intento captura inline")
+                    except Exception:
+                        pass
                     with sac.expect_response(_is_pdf_resp_inline, timeout=15000) as resp_info:
                         try:
                             if link and link.count():
@@ -3635,8 +3671,16 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                     nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
                     cuerpo = resp.body()
                     destino = _guardar(cuerpo, nombre, i)
+                    if destino:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: captura inline OK -> {destino}")
+                        except Exception:
+                            pass
                 except PWTimeoutError:
-                    pass
+                    try:
+                        logging.info(f"[RNR] Fila {i}: captura inline timeout")
+                    except Exception:
+                        pass
 
             # 4) invocación directa por JS si tenemos guid
             if not destino and guid:
@@ -3647,27 +3691,54 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                             return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
                         except Exception:
                             return False
+                    try:
+                        logging.info(f"[RNR] Fila {i}: intento descarga por guid {guid}")
+                    except Exception:
+                        pass
                     with sac.expect_response(_is_pdf_resp_eval, timeout=15000) as resp_info:
                         sac.evaluate("g => { try { window.VerInformeRNR && window.VerInformeRNR(g); } catch(e){} }", guid)
                     resp = resp_info.value
                     nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
                     cuerpo = resp.body()
                     destino = _guardar(cuerpo, nombre, i)
+                    if destino:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: descarga por guid OK -> {destino}")
+                        except Exception:
+                            pass
                 except PWTimeoutError:
-                    pass
-                except Exception:
-                    pass
+                    try:
+                        logging.info(f"[RNR] Fila {i}: descarga por guid timeout")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        logging.info(f"[RNR] Fila {i}: descarga por guid error: {e}")
+                    except Exception:
+                        pass
 
         # Validaciones finales
         if not destino or not destino.exists():
+            try:
+                logging.info(f"[RNR] Fila {i}: no se obtuvo archivo")
+            except Exception:
+                pass
             continue
         if destino.suffix.lower() != ".pdf":
             destino = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
         if not destino or not destino.exists() or destino.suffix.lower() != ".pdf":
+            try:
+                logging.info(f"[RNR] Fila {i}: archivo inválido tras conversión")
+            except Exception:
+                pass
             continue
         if _pdf_contiene_mensaje_permiso(destino):
             try:
                 destino.unlink()
+            except Exception:
+                pass
+            try:
+                logging.info(f"[RNR] Fila {i}: PDF con mensaje de permisos, se descarta")
             except Exception:
                 pass
             continue
@@ -3680,6 +3751,10 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
         # Fecha desde el contenido del PDF
         fecha = _fecha_rnr_desde_pdf(destino) or ""
         informes.append((destino, fecha))
+        try:
+            logging.info(f"[RNR] Archivo agregado: {destino.name} (fecha {fecha})")
+        except Exception:
+            pass
 
     # Fallback: si no se capturó nada por filas, intentar por candidatos globales en el contenedor
     if not informes:
@@ -3690,6 +3765,10 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             n = cand.count()
         except Exception:
             n = 0
+        try:
+            logging.info(f"[RNR] Fallback: candidatos globales={n}")
+        except Exception:
+            pass
         from playwright.sync_api import TimeoutError as PWTimeoutError
         for j in range(n):
             link = cand.nth(j)
@@ -3704,27 +3783,51 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
                 d = dl.value
                 destino = carpeta / d.suggested_filename
                 d.save_as(destino)
+                try:
+                    logging.info(f"[RNR] Fallback {j}: descarga directa OK -> {destino}")
+                except Exception:
+                    pass
             except PWTimeoutError:
                 try:
                     pop = sac.context.wait_for_event("page", timeout=6000)
                     try:
                         destino = _capturar_desde_pagina(pop, j)
+                        if destino:
+                            try:
+                                logging.info(f"[RNR] Fallback {j}: descarga desde popup OK -> {destino}")
+                            except Exception:
+                                pass
                     finally:
                         try:
                             pop.close()
                         except Exception:
                             pass
                 except PWTimeoutError:
-                    pass
+                    try:
+                        logging.info(f"[RNR] Fallback {j}: no hubo popup")
+                    except Exception:
+                        pass
             if not destino or not destino.exists():
+                try:
+                    logging.info(f"[RNR] Fallback {j}: sin archivo")
+                except Exception:
+                    pass
                 continue
             if destino.suffix.lower() != ".pdf":
                 destino = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
             if not destino or not destino.exists() or destino.suffix.lower() != ".pdf":
+                try:
+                    logging.info(f"[RNR] Fallback {j}: archivo inválido")
+                except Exception:
+                    pass
                 continue
             if _pdf_contiene_mensaje_permiso(destino):
                 try:
                     destino.unlink()
+                except Exception:
+                    pass
+                try:
+                    logging.info(f"[RNR] Fallback {j}: PDF con mensaje de permisos, se descarta")
                 except Exception:
                     pass
                 continue
@@ -3734,6 +3837,10 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
             vistos.add(key)
             fecha = _fecha_rnr_desde_pdf(destino) or ""
             informes.append((destino, fecha))
+            try:
+                logging.info(f"[RNR] Fallback archivo agregado: {destino.name} (fecha {fecha})")
+            except Exception:
+                pass
 
     return informes
 
