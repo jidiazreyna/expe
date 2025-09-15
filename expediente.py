@@ -558,9 +558,10 @@ except Exception:
 def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDICE", keep_sidecar: bool = False):
     """
     Fusiona bloques PDF, inserta un índice clickable detrás de la carátula y devuelve
-    (idx_page_count, relink_items) donde:
-      - idx_page_count: cantidad de páginas del índice insertadas
-      - relink_items  : [{'title', 'start', 'target', 'y'}] para re-inyectar links post-OCR
+    (idx_page_count, relink_items, caratula_page_count) donde:
+      - idx_page_count         : cantidad de páginas del índice insertadas
+      - relink_items           : [{'title', 'start', 'target', 'y'}] para re-inyectar links post-OCR
+      - caratula_page_count    : cantidad de páginas de la carátula inicial
     También escribe <destino>.toc.json con ese mapeo.
     El archivo auxiliar se elimina automáticamente salvo que keep_sidecar sea True.
     """
@@ -573,7 +574,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
             logging.info(f"[MERGE:DONE/NO_FITZ] {destino.name}")
         except Exception:
             pass
-        return 0, []
+        return 0, [], 0
 
     def _add_goto_link(pg, rect, target_page_zero_based) -> bool:
         """Crea un link interno robusto, compatible con varias versiones de PyMuPDF."""
@@ -640,12 +641,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
     # --- Índice ---
     idx_page_count = 0
     relink_items = []
+    caratula_page_count = items_info[0][2] if items_info else 0
 
     if dst.page_count > 0 and len(items_info) > 1:
         try:
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
-            caratula_page_count = items_info[0][2] if items_info else 0
             entries = sorted(items_info[1:], key=lambda x: x[1])  # salteo carátula
             if entries:
                 fs = 12
@@ -876,7 +877,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
     dst.close()
     try: logging.info(f"[MERGE:DONE/INDICE] {destino.name}")
     except Exception: pass
-    return idx_page_count, relink_items
+    return idx_page_count, relink_items, caratula_page_count
 
 
 def _relink_indice_con_fitz(pdf_path: Path, items: list[dict],
@@ -5891,7 +5892,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
     
                 out = Path(carpeta_salida) / f"Exp_{nro_exp}.pdf"
                 out_sin_links = out
-                idx_pages, idx_map = fusionar_bloques_con_indice(
+                idx_pages, idx_map, caratula_page_count = fusionar_bloques_con_indice(
                     bloques_final,
                     out,
                     index_title="INDICE",
@@ -5948,7 +5949,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     # sólo una de cada dos (recto): 1, (sin), 2, (sin)...
                     _agregar_fojas(
                         out,
-                        start_after=1 + idx_pages,
+                        start_after=(caratula_page_count or 0) + idx_pages,
                         cada_dos=True,
                         numero_inicial=1,
                     )
