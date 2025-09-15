@@ -665,7 +665,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     return pages
 
                 idx_page_count = _calc_pages(len(entries))
-                index_pages = []
+                index_pages: list[int] = []
                 for i in range(idx_page_count):
                     pno = 1 + i
                     try:
@@ -679,7 +679,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                         try: logging.warning(f"[INDICE] página {pno} sin parent; se omite")
                         except Exception: pass
                         continue
-                    index_pages.append(pg)
+                    index_pages.append(pno)
 
                 if not index_pages:
                     try: logging.warning("[INDICE] no se generaron páginas válidas de índice")
@@ -699,9 +699,24 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     use_foja_numbers = _env_true("FOJAS", "1")
 
                     page_idx = 0
-                    idx_page = index_pages[page_idx]
-                    try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-                    except Exception: pass
+                    def _load_idx_page() -> fitz.Page | None:
+                        pno = index_pages[page_idx]
+                        try:
+                            pg = dst.load_page(pno)
+                        except Exception as e:
+                            try: logging.warning(f"[INDICE] no se pudo recargar página {pno}: {e}")
+                            except Exception: pass
+                            return None
+                        if getattr(pg, "parent", None) is None:
+                            try: logging.warning(f"[INDICE] página {pno} sin parent; se omite")
+                            except Exception: pass
+                            return None
+                        return pg
+
+                    idx_page = _load_idx_page()
+                    if idx_page is not None:
+                        try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
+                        except Exception: pass
                     y = y_start
                     toc_outline = []
 
@@ -714,14 +729,18 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                                 except Exception:
                                     pass
                                 break
-                            idx_page = index_pages[page_idx]
-                            try:
-                                idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                            except Exception:
-                                pass
+                            idx_page = _load_idx_page()
+                            if idx_page is not None:
+                                try:
+                                    idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
+                                except Exception:
+                                    pass
                             y = y_start
 
                         t = str(title)[:120]
+                        idx_page = _load_idx_page()
+                        if idx_page is None:
+                            continue
                         try:
                             idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
                         except Exception as e:
@@ -763,19 +782,27 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                             if tw_dot > 0:
                                 n = int((dot_area_right - left_end) / tw_dot)
                                 if n > 2:
-                                    try:
-                                        idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
-                                    except Exception:
-                                        pass
+                                    idx_page = _load_idx_page()
+                                    if idx_page is not None:
+                                        try:
+                                            idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
+                                        except Exception:
+                                            pass
 
-                        try:
-                            idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
-                        except Exception:
-                            pass
+                        idx_page = _load_idx_page()
+                        if idx_page is not None:
+                            try:
+                                idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
+                            except Exception:
+                                pass
 
                         # Rect clickable
                         link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
-                        ok_link = _add_goto_link(idx_page, link_rect, target_page)
+                        idx_page = _load_idx_page()
+                        if idx_page is not None:
+                            ok_link = _add_goto_link(idx_page, link_rect, target_page)
+                        else:
+                            ok_link = False
                         try:
                             logging.info(f"[INDICE] link_{'ok' if ok_link else 'fail'} {t[:50]} -> p{target_page}")
                         except Exception:
@@ -783,7 +810,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
                         relink_items.append({
                             "title": t,
-                            "start": (idx_page.number + 1),   # 1-based
+                            "start": (index_pages[page_idx] + 1),   # 1-based
                             "target": (target_page + 1),      # 1-based
                             "y": float(y)
                         })
@@ -810,12 +837,18 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
                     # Diagnóstico: contar links por página del índice
                     try:
-                        for p in index_pages:
-                            ln, c = p.first_link, 0
+                        for pno in index_pages:
+                            try:
+                                pg = dst.load_page(pno)
+                            except Exception:
+                                continue
+                            if getattr(pg, "parent", None) is None:
+                                continue
+                            ln, c = pg.first_link, 0
                             while ln:
                                 c += 1
                                 ln = ln.next
-                            logging.info(f"[INDICE] links en página {p.number+1}: {c}")
+                            logging.info(f"[INDICE] links en página {pg.number+1}: {c}")
                     except Exception:
                         pass
             else:
