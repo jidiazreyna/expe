@@ -698,10 +698,37 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
                     use_foja_numbers = _env_true("FOJAS", "1")
 
+                    def _idx_insert(page, xy, text, **kw):
+                        try:
+                            page.insert_text(xy, text, **kw)
+                            return page, True
+                        except AttributeError as e:
+                            if "is_pdf" in str(e):
+                                try:
+                                    page = dst.load_page(page.number)
+                                    page.insert_text(xy, text, **kw)
+                                    return page, True
+                                except Exception as e2:
+                                    try:
+                                        logging.info(f"[INDICE] insert_text error: {e2}")
+                                    except Exception:
+                                        pass
+                                    return page, False
+                            try:
+                                logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception:
+                                pass
+                            return page, False
+                        except Exception as e:
+                            try:
+                                logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception:
+                                pass
+                            return page, False
+
                     page_idx = 0
                     idx_page = index_pages[page_idx]
-                    try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-                    except Exception: pass
+                    idx_page, _ = _idx_insert(idx_page, (x_left, title_y), index_title, fontsize=16)
                     y = y_start
                     toc_outline = []
 
@@ -715,20 +742,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                                     pass
                                 break
                             idx_page = index_pages[page_idx]
-                            try:
-                                idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                            except Exception:
-                                pass
+                            idx_page, _ = _idx_insert(idx_page, (x_left, title_y), index_title + " (cont.)", fontsize=16)
                             y = y_start
 
                         t = str(title)[:120]
-                        try:
-                            idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
-                        except Exception as e:
-                            try:
-                                logging.info(f"[INDICE] insert_text error: {e}")
-                            except Exception:
-                                pass
+                        idx_page, ok = _idx_insert(idx_page, (x_left, y), t, fontname="helv", fontsize=fs)
+                        if not ok:
                             continue
 
                         # ancho título (punteado)
@@ -763,15 +782,9 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                             if tw_dot > 0:
                                 n = int((dot_area_right - left_end) / tw_dot)
                                 if n > 2:
-                                    try:
-                                        idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
-                                    except Exception:
-                                        pass
+                                    idx_page, _ = _idx_insert(idx_page, (left_end, y), "." * n, fontname="helv", fontsize=fs)
 
-                        try:
-                            idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
-                        except Exception:
-                            pass
+                        idx_page, _ = _idx_insert(idx_page, (x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
 
                         # Rect clickable
                         link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
