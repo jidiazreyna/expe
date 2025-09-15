@@ -3522,242 +3522,248 @@ def _descargar_informes_reincidencia(sac, carpeta: Path) -> list[tuple[Path, str
 
     for i in range(1, total):  # saltear header
         try:
-            fila = filas.nth(i)
-        except Exception:
-            continue
-        # Log del inicio de procesamiento
-        try:
-            logging.info(f"[RNR] Procesando fila {i}")
-        except Exception:
-            pass
-
-        # Link/ícono candidato en la fila
-        link = fila.locator(
-            "*[onclick*='Reincidencia'], *[href*='Reincidencia'], *[onclick*='InformeRNR'], *[href*='InformeRNR'], "
-            "a:has(img[src*='adobe']), a:has(img[src*='Adobe']), a:has(img[src*='Adobe16']), a:has(img[src*='pdf']), "
-            "a[href*='__doPostBack'][href*='gv'][href*='Informes'], a[onclick*='__doPostBack'][onclick*='gv'][onclick*='Informes']"
-        ).first
-        img_only = None
-        if not (link and link.count()):
-            # Fallback: intentar con el IMG directamente
-            img_only = fila.locator("img[src*='adobe'], img[src*='Adobe'], img[src*='Adobe16'], img[src*='pdf']").first
-            if not (img_only and img_only.count()):
+            try:
+                fila = filas.nth(i)
+            except Exception:
+                continue
+            # Log del inicio de procesamiento
+            try:
+                logging.info(f"[RNR] Procesando fila {i}")
+            except Exception:
+                pass
+        
+            # Link/ícono candidato en la fila
+            link = fila.locator(
+                "*[onclick*='Reincidencia'], *[href*='Reincidencia'], *[onclick*='InformeRNR'], *[href*='InformeRNR'], "
+                "a:has(img[src*='adobe']), a:has(img[src*='Adobe']), a:has(img[src*='Adobe16']), a:has(img[src*='pdf']), "
+                "a[href*='__doPostBack'][href*='gv'][href*='Informes'], a[onclick*='__doPostBack'][onclick*='gv'][onclick*='Informes']"
+            ).first
+            img_only = None
+            if not (link and link.count()):
+                # Fallback: intentar con el IMG directamente
+                img_only = fila.locator("img[src*='adobe'], img[src*='Adobe'], img[src*='Adobe16'], img[src*='pdf']").first
+                if not (img_only and img_only.count()):
+                    try:
+                        html_f = fila.inner_html()
+                        logging.info(f"[RNR] Fila {i}: sin link/ícono (recorte): {(html_f or '')[:800]}")
+                    except Exception:
+                        pass
+                    continue
+            else:
                 try:
-                    html_f = fila.inner_html()
-                    logging.info(f"[RNR] Fila {i}: sin link/ícono (recorte): {(html_f or '')[:800]}")
+                    href = link.get_attribute("href") if link and link.count() else ""
+                    oc = link.get_attribute("onclick") if link and link.count() else ""
+                    logging.info(f"[RNR] Fila {i}: link href={href} onclick={oc}")
+                except Exception:
+                    pass
+        
+            # GUID/ID (si hubiera) para invocación directa
+            guid = None
+            try:
+                href = (link.get_attribute("href") if link and link.count() else None) or ""
+                oc = (link.get_attribute("onclick") if link and link.count() else None) or ""
+                m = re.search(r"(VerInforme\w*|VerReincid\w*|Reinciden\w*)\s*\(([^)]*)\)", f"{href} {oc}")
+                if m:
+                    args = m.group(2)
+                    arg0 = args.split(",")[0].strip()
+                    if (len(arg0) >= 2) and ((arg0[0] == arg0[-1]) and arg0[0] in "'\""):
+                        arg0 = arg0[1:-1]
+                    guid = arg0 or None
+            except Exception:
+                pass
+        
+            destino = None
+        
+            # 1) descarga directa en la misma page
+            try:
+                try:
+                    _kill_overlays(sac)
+                except Exception:
+                    pass
+                try:
+                    link.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    logging.info(f"[RNR] Fila {i}: intento descarga directa")
+                except Exception:
+                    pass
+                with sac.expect_download(timeout=12000) as dl:
+                    if link and link.count():
+                        link.click(force=True)
+                    elif img_only and img_only.count():
+                        try:
+                            img_only.click(force=True)
+                        except Exception:
+                            # click en el padre <a>
+                            try:
+                                img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
+                            except Exception:
+                                raise
+                d = dl.value
+                destino = carpeta / d.suggested_filename
+                d.save_as(destino)
+                try:
+                    logging.info(f"[RNR] Fila {i}: descarga directa OK -> {destino}")
+                except Exception:
+                    pass
+            except PWTimeoutError:
+                try:
+                    logging.info(f"[RNR] Fila {i}: descarga directa timeout")
+                except Exception:
+                    pass
+                # 2) popup
+                try:
+                    if link and link.count():
+                        link.click(force=True)
+                    elif img_only and img_only.count():
+                        try:
+                            img_only.click(force=True)
+                        except Exception:
+                            try:
+                                img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                try:
+                    pop = ctx.wait_for_event("page", timeout=6000)
+                    try:
+                        destino = _capturar_desde_pagina(pop, i)
+                        if destino:
+                            try:
+                                logging.info(f"[RNR] Fila {i}: descarga desde popup OK -> {destino}")
+                            except Exception:
+                                pass
+                    finally:
+                        try:
+                            pop.close()
+                        except Exception:
+                            pass
+                except PWTimeoutError:
+                    try:
+                        logging.info(f"[RNR] Fila {i}: no hubo popup")
+                    except Exception:
+                        pass
+        
+                # 3) inline en la misma página
+                if not destino:
+                    try:
+                        def _is_pdf_resp_inline(r):
+                            try:
+                                ct = (r.headers or {}).get('content-type', '')
+                                return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
+                            except Exception:
+                                return False
+                        try:
+                            logging.info(f"[RNR] Fila {i}: intento captura inline")
+                        except Exception:
+                            pass
+                        with sac.expect_response(_is_pdf_resp_inline, timeout=15000) as resp_info:
+                            try:
+                                if link and link.count():
+                                    link.click()
+                                elif img_only and img_only.count():
+                                    try:
+                                        img_only.click()
+                                    except Exception:
+                                        img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
+                            except Exception:
+                                pass
+                        resp = resp_info.value
+                        nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
+                        cuerpo = resp.body()
+                        destino = _guardar(cuerpo, nombre, i)
+                        if destino:
+                            try:
+                                logging.info(f"[RNR] Fila {i}: captura inline OK -> {destino}")
+                            except Exception:
+                                pass
+                    except PWTimeoutError:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: captura inline timeout")
+                        except Exception:
+                            pass
+        
+                # 4) invocación directa por JS si tenemos guid
+                if not destino and guid:
+                    try:
+                        def _is_pdf_resp_eval(r):
+                            try:
+                                ct = (r.headers or {}).get('content-type', '')
+                                return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
+                            except Exception:
+                                return False
+                        try:
+                            logging.info(f"[RNR] Fila {i}: intento descarga por guid {guid}")
+                        except Exception:
+                            pass
+                        with sac.expect_response(_is_pdf_resp_eval, timeout=15000) as resp_info:
+                            sac.evaluate("g => { try { window.VerInformeRNR && window.VerInformeRNR(g); } catch(e){} }", guid)
+                        resp = resp_info.value
+                        nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
+                        cuerpo = resp.body()
+                        destino = _guardar(cuerpo, nombre, i)
+                        if destino:
+                            try:
+                                logging.info(f"[RNR] Fila {i}: descarga por guid OK -> {destino}")
+                            except Exception:
+                                pass
+                    except PWTimeoutError:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: descarga por guid timeout")
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        try:
+                            logging.info(f"[RNR] Fila {i}: descarga por guid error: {e}")
+                        except Exception:
+                            pass
+        
+            # Validaciones finales
+            if not destino or not destino.exists():
+                try:
+                    logging.info(f"[RNR] Fila {i}: no se obtuvo archivo")
                 except Exception:
                     pass
                 continue
-        else:
-            try:
-                href = link.get_attribute("href") if link and link.count() else ""
-                oc = link.get_attribute("onclick") if link and link.count() else ""
-                logging.info(f"[RNR] Fila {i}: link href={href} onclick={oc}")
-            except Exception:
-                pass
-
-        # GUID/ID (si hubiera) para invocación directa
-        guid = None
-        try:
-            href = (link.get_attribute("href") if link and link.count() else None) or ""
-            oc = (link.get_attribute("onclick") if link and link.count() else None) or ""
-            m = re.search(r"(VerInforme\w*|VerReincid\w*|Reinciden\w*)\s*\(([^)]*)\)", f"{href} {oc}")
-            if m:
-                args = m.group(2)
-                arg0 = args.split(",")[0].strip()
-                if (len(arg0) >= 2) and ((arg0[0] == arg0[-1]) and arg0[0] in "'\""):
-                    arg0 = arg0[1:-1]
-                guid = arg0 or None
-        except Exception:
-            pass
-
-        destino = None
-
-        # 1) descarga directa en la misma page
-        try:
-            try:
-                _kill_overlays(sac)
-            except Exception:
-                pass
-            try:
-                link.scroll_into_view_if_needed()
-            except Exception:
-                pass
-            try:
-                logging.info(f"[RNR] Fila {i}: intento descarga directa")
-            except Exception:
-                pass
-            with sac.expect_download(timeout=12000) as dl:
-                if link and link.count():
-                    link.click(force=True)
-                elif img_only and img_only.count():
-                    try:
-                        img_only.click(force=True)
-                    except Exception:
-                        # click en el padre <a>
-                        try:
-                            img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
-                        except Exception:
-                            raise
-            d = dl.value
-            destino = carpeta / d.suggested_filename
-            d.save_as(destino)
-            try:
-                logging.info(f"[RNR] Fila {i}: descarga directa OK -> {destino}")
-            except Exception:
-                pass
-        except PWTimeoutError:
-            try:
-                logging.info(f"[RNR] Fila {i}: descarga directa timeout")
-            except Exception:
-                pass
-            # 2) popup
-            try:
-                if link and link.count():
-                    link.click(force=True)
-                elif img_only and img_only.count():
-                    try:
-                        img_only.click(force=True)
-                    except Exception:
-                        try:
-                            img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            try:
-                pop = ctx.wait_for_event("page", timeout=6000)
+            if destino.suffix.lower() != ".pdf":
+                destino = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
+            if not destino or not destino.exists() or destino.suffix.lower() != ".pdf":
                 try:
-                    destino = _capturar_desde_pagina(pop, i)
-                    if destino:
-                        try:
-                            logging.info(f"[RNR] Fila {i}: descarga desde popup OK -> {destino}")
-                        except Exception:
-                            pass
-                finally:
-                    try:
-                        pop.close()
-                    except Exception:
-                        pass
-            except PWTimeoutError:
-                try:
-                    logging.info(f"[RNR] Fila {i}: no hubo popup")
+                    logging.info(f"[RNR] Fila {i}: archivo inválido tras conversión")
                 except Exception:
                     pass
-
-            # 3) inline en la misma página
-            if not destino:
+                continue
+            if _pdf_contiene_mensaje_permiso(destino):
                 try:
-                    def _is_pdf_resp_inline(r):
-                        try:
-                            ct = (r.headers or {}).get('content-type', '')
-                            return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
-                        except Exception:
-                            return False
-                    try:
-                        logging.info(f"[RNR] Fila {i}: intento captura inline")
-                    except Exception:
-                        pass
-                    with sac.expect_response(_is_pdf_resp_inline, timeout=15000) as resp_info:
-                        try:
-                            if link and link.count():
-                                link.click()
-                            elif img_only and img_only.count():
-                                try:
-                                    img_only.click()
-                                except Exception:
-                                    img_only.evaluate("el => el.closest('a') && el.closest('a').click()")
-                        except Exception:
-                            pass
-                    resp = resp_info.value
-                    nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
-                    cuerpo = resp.body()
-                    destino = _guardar(cuerpo, nombre, i)
-                    if destino:
-                        try:
-                            logging.info(f"[RNR] Fila {i}: captura inline OK -> {destino}")
-                        except Exception:
-                            pass
-                except PWTimeoutError:
-                    try:
-                        logging.info(f"[RNR] Fila {i}: captura inline timeout")
-                    except Exception:
-                        pass
-
-            # 4) invocación directa por JS si tenemos guid
-            if not destino and guid:
+                    destino.unlink()
+                except Exception:
+                    pass
                 try:
-                    def _is_pdf_resp_eval(r):
-                        try:
-                            ct = (r.headers or {}).get('content-type', '')
-                            return ('application/pdf' in (ct or '').lower()) or ('application/octet-stream' in (ct or '').lower())
-                        except Exception:
-                            return False
-                    try:
-                        logging.info(f"[RNR] Fila {i}: intento descarga por guid {guid}")
-                    except Exception:
-                        pass
-                    with sac.expect_response(_is_pdf_resp_eval, timeout=15000) as resp_info:
-                        sac.evaluate("g => { try { window.VerInformeRNR && window.VerInformeRNR(g); } catch(e){} }", guid)
-                    resp = resp_info.value
-                    nombre = _filename_from_cd((resp.headers or {}).get('content-disposition'))
-                    cuerpo = resp.body()
-                    destino = _guardar(cuerpo, nombre, i)
-                    if destino:
-                        try:
-                            logging.info(f"[RNR] Fila {i}: descarga por guid OK -> {destino}")
-                        except Exception:
-                            pass
-                except PWTimeoutError:
-                    try:
-                        logging.info(f"[RNR] Fila {i}: descarga por guid timeout")
-                    except Exception:
-                        pass
-                except Exception as e:
-                    try:
-                        logging.info(f"[RNR] Fila {i}: descarga por guid error: {e}")
-                    except Exception:
-                        pass
-
-        # Validaciones finales
-        if not destino or not destino.exists():
+                    logging.info(f"[RNR] Fila {i}: PDF con mensaje de permisos, se descarta")
+                except Exception:
+                    pass
+                continue
+        
+            key = (destino.name, destino.stat().st_size if destino.exists() else 0)
+            if key in vistos:
+                continue
+            vistos.add(key)
+        
+            # Fecha desde el contenido del PDF
+            fecha = _fecha_rnr_desde_pdf(destino) or ""
+            informes.append((destino, fecha))
             try:
-                logging.info(f"[RNR] Fila {i}: no se obtuvo archivo")
+                logging.info(f"[RNR] Archivo agregado: {destino.name} (fecha {fecha})")
             except Exception:
                 pass
-            continue
-        if destino.suffix.lower() != ".pdf":
-            destino = _ensure_pdf_fast(destino) if '_ensure_pdf_fast' in globals() else _ensure_pdf(destino)
-        if not destino or not destino.exists() or destino.suffix.lower() != ".pdf":
+        
+        except Exception as exc:
             try:
-                logging.info(f"[RNR] Fila {i}: archivo inválido tras conversión")
+                logging.exception(f"[RNR] Fila {i}: error inesperado: {exc}")
             except Exception:
                 pass
-            continue
-        if _pdf_contiene_mensaje_permiso(destino):
-            try:
-                destino.unlink()
-            except Exception:
-                pass
-            try:
-                logging.info(f"[RNR] Fila {i}: PDF con mensaje de permisos, se descarta")
-            except Exception:
-                pass
-            continue
-
-        key = (destino.name, destino.stat().st_size if destino.exists() else 0)
-        if key in vistos:
-            continue
-        vistos.add(key)
-
-        # Fecha desde el contenido del PDF
-        fecha = _fecha_rnr_desde_pdf(destino) or ""
-        informes.append((destino, fecha))
-        try:
-            logging.info(f"[RNR] Archivo agregado: {destino.name} (fecha {fecha})")
-        except Exception:
-            pass
-
     # Fallback: si no se capturó nada por filas, intentar por candidatos globales en el contenedor
     if not informes:
         try:
@@ -5801,10 +5807,7 @@ def descargar_expediente(tele_user, tele_pass, intra_user, intra_pass, nro_exp, 
                     sac.bring_to_front()
                 except Exception:
                     pass
-                try:
-                    informes_rnr = _descargar_informes_reincidencia(sac, temp_dir)
-                except Exception:
-                    informes_rnr = []
+                informes_rnr = _descargar_informes_reincidencia(sac, temp_dir)
                 logging.info(f"[RNR] Informes RNR descargados: {len(informes_rnr)}")
                 for rnr_path, rnr_fecha in informes_rnr:
                     pth = (
