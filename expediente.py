@@ -713,10 +713,31 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                             return None
                         return pg
 
+                    def _safe_insert_text(pg: fitz.Page, pos, txt, **kw) -> tuple[fitz.Page, bool]:
+                        try:
+                            pg.insert_text(pos, txt, **kw)
+                            return pg, True
+                        except AttributeError as e:
+                            if "is_pdf" in str(e):
+                                try:
+                                    pg = dst.load_page(pg.number)
+                                    pg.insert_text(pos, txt, **kw)
+                                    return pg, True
+                                except Exception as e2:
+                                    try: logging.info(f"[INDICE] insert_text error: {e2}")
+                                    except Exception: pass
+                                    return pg, False
+                            try: logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception: pass
+                            return pg, False
+                        except Exception as e:
+                            try: logging.info(f"[INDICE] insert_text error: {e}")
+                            except Exception: pass
+                            return pg, False
+
                     idx_page = _load_idx_page()
                     if idx_page is not None:
-                        try: idx_page.insert_text((x_left, title_y), index_title, fontsize=16)
-                        except Exception: pass
+                        idx_page, _ = _safe_insert_text(idx_page, (x_left, title_y), index_title, fontsize=16)
                     y = y_start
                     toc_outline = []
 
@@ -731,23 +752,15 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                                 break
                             idx_page = _load_idx_page()
                             if idx_page is not None:
-                                try:
-                                    idx_page.insert_text((x_left, title_y), index_title + " (cont.)", fontsize=16)
-                                except Exception:
-                                    pass
+                                idx_page, _ = _safe_insert_text(idx_page, (x_left, title_y), index_title + " (cont.)", fontsize=16)
                             y = y_start
 
                         t = str(title)[:120]
                         idx_page = _load_idx_page()
                         if idx_page is None:
                             continue
-                        try:
-                            idx_page.insert_text((x_left, y), t, fontname="helv", fontsize=fs)
-                        except Exception as e:
-                            try:
-                                logging.info(f"[INDICE] insert_text error: {e}")
-                            except Exception:
-                                pass
+                        idx_page, ok = _safe_insert_text(idx_page, (x_left, y), t, fontname="helv", fontsize=fs)
+                        if not ok:
                             continue
 
                         # ancho título (punteado)
@@ -784,17 +797,15 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                                 if n > 2:
                                     idx_page = _load_idx_page()
                                     if idx_page is not None:
-                                        try:
-                                            idx_page.insert_text((left_end, y), "." * n, fontname="helv", fontsize=fs)
-                                        except Exception:
-                                            pass
+                                        idx_page, ok = _safe_insert_text(idx_page, (left_end, y), "." * n, fontname="helv", fontsize=fs)
+                                        if not ok:
+                                            continue
 
                         idx_page = _load_idx_page()
                         if idx_page is not None:
-                            try:
-                                idx_page.insert_text((x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
-                            except Exception:
-                                pass
+                            idx_page, ok = _safe_insert_text(idx_page, (x_right - tw, y), fj_txt, fontname="helv", fontsize=fs)
+                            if not ok:
+                                continue
 
                         # Rect clickable
                         link_rect = fitz.Rect(x_left - 2, y - fs, x_right, y + fs)
