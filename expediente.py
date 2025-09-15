@@ -595,7 +595,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
     dst = fitz.open()
     margin = 18
-    items_info = []  # (title_for_toc, start_page_zero_based)
+    items_info = []  # (title_for_toc, start_page_zero_based, page_count)
 
     # --- Inserción de bloques ---
     for item in bloques:
@@ -615,11 +615,12 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         start = dst.page_count
         dst.insert_pdf(src)
         end = dst.page_count
+        block_page_count = max(0, end - start)
         src.close()
 
         title_for_toc = (str(toc_title).strip() if toc_title
                          else (str(header_text).strip() if header_text else Path(pdf_path).name))
-        items_info.append((title_for_toc, start))
+        items_info.append((title_for_toc, start, block_page_count))
 
         # Header opcional
         if header_text:
@@ -644,6 +645,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
         try:
             first_rect = dst[0].rect
             pw, ph = first_rect.width, first_rect.height
+            caratula_page_count = items_info[0][2] if items_info else 0
             entries = sorted(items_info[1:], key=lambda x: x[1])  # salteo carátula
             if entries:
                 fs = 12
@@ -667,7 +669,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                 idx_page_count = _calc_pages(len(entries))
                 index_pages: list[int] = []
                 for i in range(idx_page_count):
-                    pno = 1 + i
+                    pno = caratula_page_count + i
                     try:
                         dst.new_page(pno=pno, width=pw, height=ph)
                         pg = dst.load_page(pno)
@@ -691,7 +693,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
 
                     def _foja_for_page(p: int):
                         # p es 0-based del PDF final
-                        skip = 1 + idx_page_count  # carátula + índice
+                        skip = caratula_page_count + idx_page_count  # carátula(s) + índice
                         if p < skip:
                             return None
                         return 1 + ((p - skip) // 2)
@@ -741,7 +743,7 @@ def fusionar_bloques_con_indice(bloques, destino: Path, index_title: str = "INDI
                     y = y_start
                     toc_outline = []
 
-                    for title, start_page in entries:
+                    for title, start_page, _page_count in entries:
                         if y > ph - margin - 24:
                             page_idx += 1
                             if page_idx >= len(index_pages):
