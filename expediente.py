@@ -5315,6 +5315,12 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
       - fijo: texto fijo (si querés que siempre diga p.ej. "1")
     """
     try:
+        start_after = int(start_after)
+    except Exception:
+        start_after = 0
+    start_after = max(0, start_after)
+
+    try:
         import fitz  # PyMuPDF (rápido)
         import unicodedata
 
@@ -5323,14 +5329,17 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
         for i in range(doc.page_count):
             pg = doc[i]
             # Evitar foliar páginas que correspondan al índice
+            skip_for_index = False
             try:
                 raw_text = pg.get_text("text") or ""
                 text_norm = unicodedata.normalize("NFKD", raw_text)
                 text_norm = text_norm.encode("ascii", "ignore").decode("ascii").lower()
-                if "indice" in text_norm:
-                    continue
+                if "indice" in text_norm and i < start_after:
+                    skip_for_index = True
             except Exception:
                 pass
+            if skip_for_index:
+                continue
             if i <= (start_after - 1):
                 continue
             if cada_dos and ((i - start_after) % 2 == 1):
@@ -5376,7 +5385,7 @@ def _agregar_fojas(pdf_in: Path, start_after: int = 1, cada_dos: bool = True,
                 is_index = "indice" in text_norm
             except Exception:
                 is_index = False
-            if is_index:
+            if is_index and i < start_after:
                 w.add_page(p)
                 continue
             if i >= start_after and (not cada_dos or ((i - start_after) % 2 == 0)):
